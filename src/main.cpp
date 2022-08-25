@@ -62,6 +62,19 @@ int main(const options& opts)
         auto vm = lauf_create_vm(lauf_default_vm_options);
 
         auto main_fn = lauf_asm_find_function_by_name(mod, "main");
+        if (main_fn == nullptr)
+        {
+            std::fprintf(stderr, "Program does not contain main.\n");
+            return 1;
+        }
+        if (auto sig = lauf_asm_function_signature(main_fn);
+            sig.input_count != 0 || sig.output_count != 1)
+        {
+            std::fprintf(stderr, "main signature is wrong: (%d => %d)\n", sig.input_count,
+                         sig.output_count);
+            return 1;
+        }
+
         auto program = lauf_asm_create_program(mod, main_fn);
 
         lauf_runtime_value return_code;
