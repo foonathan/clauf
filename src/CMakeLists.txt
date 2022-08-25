@@ -16,6 +16,9 @@ FetchContent_MakeAvailable(lexy)
 FetchContent_Declare(lauf URL https://github.com/foonathan/lauf/archive/refs/heads/main.zip)
 FetchContent_MakeAvailable(lauf)
 
+FetchContent_Declare(dryad URL https://github.com/foonathan/dryad/archive/refs/heads/main.zip)
+FetchContent_MakeAvailable(dryad)
+
 file(DOWNLOAD 
         https://github.com/CLIUtils/CLI11/releases/download/v2.2.0/CLI11.hpp 
         ${CMAKE_CURRENT_BINARY_DIR}/CLI11.hpp)
@@ -26,7 +29,7 @@ target_sources(clauf PRIVATE ${source_files})
 target_compile_features(clauf PRIVATE cxx_std_17)
 target_include_directories(clauf PRIVATE ../include)
 target_include_directories(clauf SYSTEM PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf)
+target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf foonathan::dryad)
 
 if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
     if("${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
