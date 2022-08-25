@@ -3,6 +3,7 @@
 
 #include <CLI11.hpp>
 #include <cstdio>
+#include <lauf/vm.h>
 #include <lexy/input/file.hpp>
 #include <string>
 
@@ -41,7 +42,11 @@ int main(const options& opts)
 
     if (!opts.compile_only)
     {
+        auto vm = lauf_create_vm(lauf_default_vm_options);
+
         CLAUF_TODO("execute");
+
+        lauf_destroy_vm(vm);
     }
 
     return 0;

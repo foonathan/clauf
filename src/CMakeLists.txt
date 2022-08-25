@@ -3,8 +3,12 @@
 
 #=== external dependencies ===#
 include(FetchContent)
+
 FetchContent_Declare(lexy URL https://lexy.foonathan.net/download/lexy-src.zip)
 FetchContent_MakeAvailable(lexy)
+
+FetchContent_Declare(lauf URL https://github.com/foonathan/lauf/archive/refs/heads/main.zip)
+FetchContent_MakeAvailable(lauf)
 
 file(DOWNLOAD 
         https://github.com/CLIUtils/CLI11/releases/download/v2.2.0/CLI11.hpp 
@@ -14,5 +18,5 @@ file(DOWNLOAD
 add_executable(clauf main.cpp)
 target_compile_features(clauf PRIVATE cxx_std_17)
 target_include_directories(clauf PRIVATE ../include ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(clauf PRIVATE foonathan::lexy)
+target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf)
 
