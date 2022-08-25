@@ -1,0 +1,41 @@
+= clauf
+
+ifdef::env-github[]
+image:https://github.com/foonathan/clauf/workflows/CI/badge.svg[Build Status]
+endif::[]
+
+clauf is a work-in-progress C interpreter that is developed live on YouTube: https://www.youtube.com/playlist?list=PLbxut1xyrkCZ-9d_03G0KBU4uh782J1eN
+
+== Goals and limitations
+
+* Support an interesting subset of C23, until we get bored.
+* **Don't** become a production ready C interpreter.
+* **Don't** invest a lot of time in generating good error messages; only test happy path.
+* **Don't** try and implement an existing C ABI.
+* Do not implement the C preprocessor (for now).
+* Try to turn as much undefined behavior into runtime panics as possible (integer overflow, invalid pointers, ...).
+
+== FAQ
+
+Why is it called clauf?::
+  It uses https://github.com/foonathan/lauf[lauf], a bytecode interpreter I'm working on as its backend.
+
+Why?::
+  Two reasons: I wanted to try out livecoding and I needed something to see how usable lauf is.
+
+Why C?::
+Short answer: It won the twitter poll.
++
+Long answer: C is a relatively small language that I am familiar with.
+It can be compiled in a single pass, does not require implementation of fancy type inference algorithms, and is low-level enough to really stress lauf's sandboxing abilities.
+
+What external libraries are you using?::
+  * https://github.com/foonathan/lexy[lexy]: for parsing
+  * https://github.com/foonathan/lauf[lauf]: as the backend
+  * https://github.com/foonathan/dryad[dryad]: data structure utilities
+  * https://github.com/CLIUtils/CLI11[CLI11]: command-line argument parsing
+
+== Program architecture
+
+TODO, actually implement something first ;)
+
