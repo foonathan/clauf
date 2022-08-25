@@ -49,7 +49,8 @@ int main(const options& opts)
         lauf_destroy_vm(vm);
     }
 
-    return 0;
+    // Exit code 70 is EX_SOFTWARE in sysexits.h
+    return clauf::_detail::todo_reached ? 70 : 0;
 }
 } // namespace clauf
 

@@ -11,13 +11,18 @@
 #define CLAUF_ASSERT(Condition, Msg) assert((Condition) && (Msg))
 #define CLAUF_UNREACHABLE(Msg) assert(::clauf::_detail::unreachable(Msg))
 
-#define CLAUF_TODO(Msg) std::fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, (Msg))
+#define CLAUF_TODO(Msg)                                                                            \
+    (std::fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, (Msg)),                         \
+     ::clauf::_detail::todo_reached = true)
 
 #define CLAUF_UNIMPLEMENTED(Msg)                                                                   \
     (assert(::clauf::_detail::unimplemented(Msg)), ::clauf::_detail::unimplemented_value{})
 
 namespace clauf::_detail
 {
+// Mutable global variable, I know.
+inline bool todo_reached = false;
+
 constexpr bool unreachable(const char*)
 {
     return false;
