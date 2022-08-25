@@ -17,6 +17,19 @@ file(DOWNLOAD
 #=== main executable ===#
 add_executable(clauf main.cpp)
 target_compile_features(clauf PRIVATE cxx_std_17)
-target_include_directories(clauf PRIVATE ../include ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(clauf PRIVATE ../include)
+target_include_directories(clauf SYSTEM PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf)
+
+if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
+    if("${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
+        target_compile_options(clauf PRIVATE /WX /W3 /D _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(clauf PRIVATE -pedantic-errors -Werror -Wall -Wextra -Wconversion -Wsign-conversion)
+    endif()
+elseif(${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
+    target_compile_options(clauf PRIVATE -pedantic-errors -Werror -Wall -Wextra -Wconversion -Wsign-conversion)
+elseif(MSVC)
+    target_compile_options(clauf PRIVATE /WX /W3 /D _CRT_SECURE_NO_WARNINGS)
+endif()
 
