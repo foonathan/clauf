@@ -1,6 +1,12 @@
 # Copyright (C) 2022 Jonathan Müller and clauf contributors
 # SPDX-License-Identifier: BSL-1.0
 
+get_filename_component(include_dir ${CMAKE_CURRENT_SOURCE_DIR}/../include/clauf ABSOLUTE)
+set(source_files
+        ${include_dir}/assert.hpp
+
+        main.cpp)
+
 #=== external dependencies ===#
 include(FetchContent)
 
@@ -15,7 +21,8 @@ file(DOWNLOAD
         ${CMAKE_CURRENT_BINARY_DIR}/CLI11.hpp)
 
 #=== main executable ===#
-add_executable(clauf main.cpp)
+add_executable(clauf)
+target_sources(clauf PRIVATE ${source_files})
 target_compile_features(clauf PRIVATE cxx_std_17)
 target_include_directories(clauf PRIVATE ../include)
 target_include_directories(clauf SYSTEM PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
