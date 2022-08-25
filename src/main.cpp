@@ -3,11 +3,19 @@
 
 #include <CLI11.hpp>
 #include <cstdio>
-#include <lauf/vm.h>
 #include <lexy/input/file.hpp>
 #include <string>
 
+#include <lauf/asm/program.h>
+#include <lauf/backend/dump.h>
+#include <lauf/runtime/value.h>
+#include <lauf/vm.h>
+#include <lauf/writer.h>
+
 #include <clauf/assert.hpp>
+#include <clauf/ast.hpp>
+#include <clauf/codegen.hpp>
+#include <clauf/compiler.hpp>
 
 namespace clauf
 {
@@ -28,23 +36,45 @@ int main(const options& opts)
         return 1;
     }
 
-    CLAUF_TODO("compile file");
+    auto ast = compile(file.buffer());
+    if (!ast)
+        return 1;
+
     if (opts.dump_ast)
     {
-        CLAUF_TODO("dump ast");
+        std::puts("=== AST ===");
+        dump_ast(*ast);
+        std::putchar('\n');
     }
 
-    CLAUF_TODO("generate bytecode");
+    auto mod = codegen(*ast);
     if (opts.dump_bytecode)
     {
-        CLAUF_TODO("dump bytecode");
+        std::puts("=== BYTECODE ===");
+        auto writer = lauf_create_stdout_writer();
+        lauf_backend_dump(writer, lauf_backend_default_dump_options, mod);
+        lauf_destroy_writer(writer);
+        std::putchar('\n');
     }
 
     if (!opts.compile_only)
     {
         auto vm = lauf_create_vm(lauf_default_vm_options);
 
-        CLAUF_TODO("execute");
+        auto main_fn = lauf_asm_find_function_by_name(mod, "main");
+        auto program = lauf_asm_create_program(mod, main_fn);
+
+        lauf_runtime_value return_code;
+        if (!lauf_vm_execute_oneshot(vm, program, nullptr, &return_code))
+            return 1;
+
+        if (return_code.as_sint != 0)
+        {
+            std::fprintf(stderr, "Program failed with exit code %d", int(return_code.as_sint));
+            return 1;
+        }
+
+        std::printf("Program succeeded.\n");
 
         lauf_destroy_vm(vm);
     }

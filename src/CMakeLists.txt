@@ -4,7 +4,13 @@
 get_filename_component(include_dir ${CMAKE_CURRENT_SOURCE_DIR}/../include/clauf ABSOLUTE)
 set(source_files
         ${include_dir}/assert.hpp
+        ${include_dir}/ast.hpp
+        ${include_dir}/codegen.hpp
+        ${include_dir}/compiler.hpp
 
+        ast.cpp
+        codegen.cpp
+        compiler.cpp
         main.cpp)
 
 #=== external dependencies ===#

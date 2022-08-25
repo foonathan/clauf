@@ -1,2 +1,2 @@
-int main()
-{}
+// This a comment!
+int main() {}
