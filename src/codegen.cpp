@@ -8,6 +8,7 @@
 #include <lauf/asm/builder.h>
 #include <lauf/asm/type.h>
 #include <lauf/lib/debug.h>
+#include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
 
 namespace
@@ -67,6 +68,10 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                     lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
                     // Remove the value after we have printed it.
                     lauf_asm_inst_pop(b, 0);
+                    break;
+                case clauf::builtin_stmt::assert:
+                    // Assert that the value is non-zero.
+                    lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
                     break;
                 }
             }

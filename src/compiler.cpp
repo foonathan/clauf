@@ -37,9 +37,9 @@ constexpr auto identifier
 constexpr auto kw_builtin_types
     = lexy::symbol_table<clauf::builtin_type::type_kind_t>.map(LEXY_LIT("int"),
                                                                clauf::builtin_type::int_);
-constexpr auto kw_builtin_stmts
-    = lexy::symbol_table<clauf::builtin_stmt::builtin_t>.map(LEXY_LIT("__clauf_print"),
-                                                             clauf::builtin_stmt::print);
+constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builtin_t> //
+                                      .map(LEXY_LIT("__clauf_print"), clauf::builtin_stmt::print)
+                                      .map(LEXY_LIT("__clauf_assert"), clauf::builtin_stmt::assert);
 } // namespace clauf::grammar
 
 //=== type parsing ===//

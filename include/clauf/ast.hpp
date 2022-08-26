@@ -170,6 +170,7 @@ public:
     enum builtin_t : std::uint16_t
     {
         print,
+        assert,
     };
 
     explicit builtin_stmt(dryad::node_ctor ctor, builtin_t builtin, clauf::expr* expr)

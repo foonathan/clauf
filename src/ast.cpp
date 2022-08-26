@@ -66,6 +66,9 @@ void clauf::dump_ast(const ast& ast)
                 case builtin_stmt::print:
                     std::printf("__clauf_print");
                     break;
+                case builtin_stmt::assert:
+                    std::printf("__clauf_assert");
+                    break;
                 }
             },
             //=== decls ===//
