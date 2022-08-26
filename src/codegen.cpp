@@ -72,31 +72,25 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
         [&](const clauf::block_stmt*) {
             // Do nothing, children do all the work.
         },
-        [&](dryad::traverse_event ev, const clauf::expr_stmt*) {
-            if (ev == dryad::traverse_event::exit)
-            {
-                // The underlying expression has been visited, and we need to remove its value from
-                // the stack.
-                lauf_asm_inst_pop(b, 0);
-            }
+        [&](dryad::traverse_event_exit, const clauf::expr_stmt*) {
+            // The underlying expression has been visited, and we need to remove its value from
+            // the stack.
+            lauf_asm_inst_pop(b, 0);
         },
-        [&](dryad::traverse_event ev, const clauf::builtin_stmt* stmt) {
-            if (ev == dryad::traverse_event::exit)
+        [&](dryad::traverse_event_exit, const clauf::builtin_stmt* stmt) {
+            // The underlying expression has been visited, and pushed its value onto the stack.
+            switch (stmt->builtin())
             {
-                // The underlying expression has been visited, and pushed its value onto the stack.
-                switch (stmt->builtin())
-                {
-                case clauf::builtin_stmt::print:
-                    // Print the value on top of the stack.
-                    lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
-                    // Remove the value after we have printed it.
-                    lauf_asm_inst_pop(b, 0);
-                    break;
-                case clauf::builtin_stmt::assert:
-                    // Assert that the value is non-zero.
-                    lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
-                    break;
-                }
+            case clauf::builtin_stmt::print:
+                // Print the value on top of the stack.
+                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
+                // Remove the value after we have printed it.
+                lauf_asm_inst_pop(b, 0);
+                break;
+            case clauf::builtin_stmt::assert:
+                // Assert that the value is non-zero.
+                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
+                break;
             }
         },
         //=== expression ===//
@@ -104,16 +98,13 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
         },
-        [&](dryad::traverse_event ev, const clauf::binary_expr* expr) {
-            if (ev == dryad::traverse_event::exit)
+        [&](dryad::traverse_event_exit, const clauf::binary_expr* expr) {
+            // At this point, two values have been pushed onto the stack.
+            switch (expr->op())
             {
-                // At this point, two values have been pushed onto the stack.
-                switch (expr->op())
-                {
-                case clauf::binary_expr::eq:
-                    lauf_asm_inst_call_builtin(b, eq_int);
-                    break;
-                }
+            case clauf::binary_expr::eq:
+                lauf_asm_inst_call_builtin(b, eq_int);
+                break;
             }
         });
 
