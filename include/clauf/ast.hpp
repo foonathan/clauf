@@ -53,9 +53,8 @@ using ast_symbol = dryad::symbol<ast_symbol_id, std::uint32_t>;
 //=== types ===//
 namespace clauf
 {
-/// The baseclass of all C types in the AST.
-struct type : dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_type,
-                                         node_kind::last_type>
+/// The base class of all C types in the AST.
+struct type : dryad::abstract_node_range<node, node_kind::first_type, node_kind::last_type>
 {
     DRYAD_ABSTRACT_NODE_CTOR(type)
 };
@@ -84,7 +83,8 @@ private:
 };
 
 /// A function type like int(void).
-class function_type : public dryad::basic_node<node_kind::function_type, type>
+class function_type
+: public dryad::basic_node<node_kind::function_type, dryad::container_node<type>>
 {
 public:
     explicit function_type(dryad::node_ctor ctor, type* return_type) : node_base(ctor)
