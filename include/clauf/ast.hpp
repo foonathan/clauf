@@ -143,12 +143,33 @@ public:
     {
         insert_child_after(nullptr, d);
     }
+
+    auto declarations()
+    {
+        auto children = node_base::children();
+        return dryad::make_node_range<decl>(children.begin(), children.end());
+    }
+    auto declarations() const
+    {
+        auto children = node_base::children();
+        return dryad::make_node_range<decl>(children.begin(), children.end());
+    }
 };
 
+/// The entire AST of a source file.
 struct ast
 {
     dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
     dryad::tree<node_kind>                                     tree;
+
+    translation_unit* root()
+    {
+        return dryad::node_cast<translation_unit>(tree.root());
+    }
+    const translation_unit* root() const
+    {
+        return dryad::node_cast<translation_unit>(tree.root());
+    }
 
     template <typename T, typename... Args>
     T* create(Args&&... args)

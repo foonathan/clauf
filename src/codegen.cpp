@@ -55,7 +55,8 @@ lauf_asm_module* clauf::codegen(const ast& ast)
 {
     context ctx(ast);
 
-    dryad::visit_tree(ast.tree, [&](const function_decl* decl) { codegen_function(ctx, decl); });
+    for (auto decl : ast.root()->declarations())
+        dryad::visit_node(decl, [&](const function_decl* decl) { codegen_function(ctx, decl); });
 
     return ctx.mod;
 }
