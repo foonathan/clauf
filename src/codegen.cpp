@@ -7,6 +7,8 @@
 
 #include <lauf/asm/builder.h>
 #include <lauf/asm/type.h>
+#include <lauf/lib/debug.h>
+#include <lauf/runtime/builtin.h>
 
 namespace
 {
@@ -52,6 +54,21 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 // The underlying expression has been visited, and we need to remove its value from
                 // the stack.
                 lauf_asm_inst_pop(b, 0);
+            }
+        },
+        [&](dryad::traverse_event ev, const clauf::builtin_stmt* stmt) {
+            if (ev == dryad::traverse_event::exit)
+            {
+                // The underlying expression has been visited, and pushed its value onto the stack.
+                switch (stmt->builtin())
+                {
+                case clauf::builtin_stmt::print:
+                    // Print the value on top of the stack.
+                    lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
+                    // Remove the value after we have printed it.
+                    lauf_asm_inst_pop(b, 0);
+                    break;
+                }
             }
         },
         [&](const clauf::integer_constant_expr* expr) {

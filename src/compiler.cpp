@@ -34,9 +34,12 @@ namespace dsl = lexy::dsl;
 constexpr auto identifier
     = dsl::identifier(dsl::unicode::xid_start_underscore, dsl::unicode::xid_continue);
 
-constexpr auto kw_builtins
+constexpr auto kw_builtin_types
     = lexy::symbol_table<clauf::builtin_type::type_kind_t>.map(LEXY_LIT("int"),
                                                                clauf::builtin_type::int_);
+constexpr auto kw_builtin_stmts
+    = lexy::symbol_table<clauf::builtin_stmt::builtin_t>.map(LEXY_LIT("__clauf_print"),
+                                                             clauf::builtin_stmt::print);
 } // namespace clauf::grammar
 
 //=== type parsing ===//
@@ -44,7 +47,7 @@ namespace clauf::grammar
 {
 struct builtin_type
 {
-    static constexpr auto rule  = dsl::symbol<kw_builtins>;
+    static constexpr auto rule  = dsl::symbol<kw_builtin_types>;
     static constexpr auto value = callback<clauf::builtin_type*>(
         [](const compiler_state& state, clauf::builtin_type::type_kind_t kind) {
             return state.ast.create<clauf::builtin_type>(kind);
@@ -90,6 +93,15 @@ struct expr_stmt
           });
 };
 
+struct builtin_stmt
+{
+    static constexpr auto rule  = dsl::symbol<kw_builtin_stmts> >> dsl::p<expr> + dsl::semicolon;
+    static constexpr auto value = callback<clauf::builtin_stmt*>(
+        [](const compiler_state& state, clauf::builtin_stmt::builtin_t builtin, clauf::expr* expr) {
+            return state.ast.create<clauf::builtin_stmt>(builtin, expr);
+        });
+};
+
 struct block_stmt
 {
     static constexpr auto rule = dsl::curly_bracketed.opt_list(dsl::recurse<stmt>);
@@ -109,7 +121,8 @@ struct block_stmt
 
 struct stmt
 {
-    static constexpr auto rule  = dsl::p<block_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
+    static constexpr auto rule
+        = dsl::p<block_stmt> | dsl::p<builtin_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
     static constexpr auto value = lexy::forward<clauf::stmt*>;
 };
 } // namespace clauf::grammar
@@ -119,7 +132,8 @@ namespace clauf::grammar
 {
 struct name
 {
-    static constexpr auto rule = identifier.reserve(dsl::literal_set(kw_builtins));
+    static constexpr auto rule = identifier.reserve(dsl::literal_set(kw_builtin_types),
+                                                    dsl::literal_set(kw_builtin_stmts));
     static constexpr auto value
         = callback<clauf::ast_symbol>([](const compiler_state& state, auto lexeme) {
               auto ptr = reinterpret_cast<const char*>(lexeme.data());

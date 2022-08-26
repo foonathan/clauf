@@ -30,6 +30,7 @@ enum class node_kind
 
     //=== statements ===//
     expr_stmt,
+    builtin_stmt,
     block_stmt,
 
     first_stmt = expr_stmt,
@@ -160,6 +161,37 @@ public:
         auto first_child = children().front();
         return dryad::node_cast<clauf::expr>(first_child);
     }
+};
+
+/// A statement that does a builtin action.
+class builtin_stmt : public dryad::basic_node<node_kind::builtin_stmt, stmt>
+{
+public:
+    enum builtin_t : std::uint16_t
+    {
+        print,
+    };
+
+    explicit builtin_stmt(dryad::node_ctor ctor, builtin_t builtin, clauf::expr* expr)
+    : node_base(ctor)
+    {
+        set_builtin_impl(builtin);
+        insert_child_after(nullptr, expr);
+    }
+
+    builtin_t builtin() const
+    {
+        return builtin_impl();
+    }
+
+    const clauf::expr* expr() const
+    {
+        auto first_child = children().front();
+        return dryad::node_cast<clauf::expr>(first_child);
+    }
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(builtin_t, builtin_impl);
 };
 
 /// A statement that contains a list of statements inside a block, e.g. { a; b; c}.
