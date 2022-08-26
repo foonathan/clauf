@@ -20,10 +20,10 @@ struct compiler_state
     mutable clauf::ast ast;
 };
 
-template <typename ReturnType, typename Callback>
-constexpr auto callback(Callback cb)
+template <typename ReturnType, typename... Callback>
+constexpr auto callback(Callback... cb)
 {
-    return lexy::bind(lexy::callback<ReturnType>(cb), lexy::parse_state, lexy::values);
+    return lexy::bind(lexy::callback<ReturnType>(cb...), lexy::parse_state, lexy::values);
 }
 } // namespace
 
@@ -54,6 +54,66 @@ struct builtin_type
 using type = builtin_type;
 } // namespace clauf::grammar
 
+//=== expression parsing ===//
+namespace clauf::grammar
+{
+struct integer_constant_expr
+{
+    static constexpr auto rule = [] {
+        auto decimal_digits
+            = dsl::integer<std::uint64_t>(dsl::digits<dsl::decimal>.sep(dsl::digit_sep_tick));
+
+        return decimal_digits;
+    }();
+
+    static constexpr auto value = callback<clauf::integer_constant_expr*>(
+        [](const compiler_state& state, std::uint64_t value) {
+            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            return state.ast.create<clauf::integer_constant_expr>(type, value);
+        });
+};
+
+using expr = integer_constant_expr;
+} // namespace clauf::grammar
+
+//=== statement parsing ===//
+namespace clauf::grammar
+{
+struct stmt;
+
+struct expr_stmt
+{
+    static constexpr auto rule = dsl::p<expr> + dsl::semicolon;
+    static constexpr auto value
+        = callback<clauf::expr_stmt*>([](const compiler_state& state, clauf::expr* expr) {
+              return state.ast.create<clauf::expr_stmt>(expr);
+          });
+};
+
+struct block_stmt
+{
+    static constexpr auto rule = dsl::curly_bracketed.opt_list(dsl::recurse<stmt>);
+
+    static constexpr auto value
+        = lexy::as_list<std::vector<clauf::stmt*>> >> callback<clauf::block_stmt*>(
+              [](const compiler_state& state, lexy::nullopt) {
+                  return state.ast.create<clauf::block_stmt>();
+              },
+              [](const compiler_state& state, auto&& stmts) {
+                  auto result = state.ast.create<clauf::block_stmt>();
+                  for (auto i = 0u; i < stmts.size(); ++i)
+                      result->add_stmt_after(i == 0 ? nullptr : stmts[i - 1], stmts[i]);
+                  return result;
+              });
+};
+
+struct stmt
+{
+    static constexpr auto rule  = dsl::p<block_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
+    static constexpr auto value = lexy::forward<clauf::stmt*>;
+};
+} // namespace clauf::grammar
+
 //=== declaration ===//
 namespace clauf::grammar
 {
@@ -69,14 +129,15 @@ struct name
 
 struct function_decl
 {
-    static constexpr auto rule = dsl::p<type> + dsl::p<name> + LEXY_LIT("(") + LEXY_LIT(")")
-                                 + LEXY_LIT("{") + LEXY_LIT("}");
+    static constexpr auto rule
+        = dsl::p<type> + dsl::p<name> + LEXY_LIT("(") + LEXY_LIT(")") + dsl::p<block_stmt>;
 
-    static constexpr auto value = callback<clauf::function_decl*>(
-        [](const compiler_state& state, clauf::type* return_type, clauf::ast_symbol name) {
-            auto fn_type = state.ast.create<clauf::function_type>(return_type);
-            return state.ast.create<clauf::function_decl>(name, fn_type);
-        });
+    static constexpr auto value
+        = callback<clauf::function_decl*>([](const compiler_state& state, clauf::type* return_type,
+                                             clauf::ast_symbol name, clauf::block_stmt* body) {
+              auto fn_type = state.ast.create<clauf::function_type>(return_type);
+              return state.ast.create<clauf::function_decl>(name, fn_type, body);
+          });
 };
 
 using decl = function_decl;

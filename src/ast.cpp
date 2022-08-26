@@ -15,6 +15,12 @@ const char* to_string(clauf::node_kind kind)
         return "translation unit";
     case clauf::node_kind::builtin_type:
         return "builtin type";
+    case clauf::node_kind::integer_constant_expr:
+        return "integer constant expr";
+    case clauf::node_kind::expr_stmt:
+        return "expression stmt";
+    case clauf::node_kind::block_stmt:
+        return "block stmt";
     case clauf::node_kind::function_type:
         return "function type";
     case clauf::node_kind::function_decl:
@@ -49,6 +55,8 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
             },
+            //=== expr ===//
+            [&](const integer_constant_expr* expr) { std::printf("%ld", expr->value()); },
             //=== decls ===//
             [&](const function_decl* d) { std::printf("'%s'", d->name().c_str(ast.symbols)); });
 

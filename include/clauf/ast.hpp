@@ -22,6 +22,19 @@ enum class node_kind
     first_type = builtin_type,
     last_type  = function_type,
 
+    //=== expressions ===//
+    integer_constant_expr,
+
+    first_expr = integer_constant_expr,
+    last_expr  = integer_constant_expr,
+
+    //=== statements ===//
+    expr_stmt,
+    block_stmt,
+
+    first_stmt = expr_stmt,
+    last_stmt  = block_stmt,
+
     //=== declarations ===//
     function_decl,
 
@@ -85,6 +98,94 @@ public:
 };
 } // namespace clauf
 
+//=== expr ===//
+namespace clauf
+{
+/// Base class for all expressions.
+class expr : public dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_expr,
+                                               node_kind::last_expr>
+{
+public:
+    const type* type() const
+    {
+        auto first_child = children().front();
+        return dryad::node_cast<clauf::type>(first_child);
+    }
+
+protected:
+    explicit expr(dryad::node_ctor ctor, node_kind kind, clauf::type* type) : node_base(ctor, kind)
+    {
+        insert_child_after(nullptr, type);
+    }
+};
+
+class integer_constant_expr : public dryad::basic_node<node_kind::integer_constant_expr, expr>
+{
+public:
+    explicit integer_constant_expr(dryad::node_ctor ctor, clauf::type* ty, std::uint64_t value)
+    : node_base(ctor, ty), _value(value)
+    {}
+
+    std::uint64_t value() const
+    {
+        return _value;
+    }
+
+private:
+    std::uint64_t _value;
+};
+} // namespace clauf
+
+//=== statements ===//
+namespace clauf
+{
+/// Base class of all statements.
+struct stmt : dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_stmt,
+                                         node_kind::last_stmt>
+{
+    DRYAD_ABSTRACT_NODE_CTOR(stmt)
+};
+
+/// A statement that evaluates an expression, e.g. `f();`
+class expr_stmt : public dryad::basic_node<node_kind::expr_stmt, stmt>
+{
+public:
+    explicit expr_stmt(dryad::node_ctor ctor, clauf::expr* expr) : node_base(ctor)
+    {
+        insert_child_after(nullptr, expr);
+    }
+
+    const clauf::expr* expr() const
+    {
+        auto first_child = children().front();
+        return dryad::node_cast<clauf::expr>(first_child);
+    }
+};
+
+/// A statement that contains a list of statements inside a block, e.g. { a; b; c}.
+class block_stmt : public dryad::basic_node<node_kind::block_stmt, stmt>
+{
+public:
+    DRYAD_NODE_CTOR(block_stmt)
+
+    void add_stmt_after(stmt* pos, stmt* new_stmt)
+    {
+        insert_child_after(pos, new_stmt);
+    }
+
+    auto statements()
+    {
+        auto children = node_base::children();
+        return dryad::make_node_range<stmt>(children.begin(), children.end());
+    }
+    auto statements() const
+    {
+        auto children = node_base::children();
+        return dryad::make_node_range<stmt>(children.begin(), children.end());
+    }
+};
+} // namespace clauf
+
 //=== declaration ===//
 namespace clauf
 {
@@ -123,9 +224,20 @@ private:
 class function_decl : public dryad::basic_node<node_kind::function_decl, decl>
 {
 public:
-    explicit function_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type)
+    explicit function_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type,
+                           clauf::block_stmt* block)
     : node_base(ctor, name, type)
-    {}
+    {
+        auto first_child = children().front();
+        insert_child_after(first_child, block);
+    }
+
+    clauf::block_stmt* body()
+    {
+        auto iter = children().begin();
+        ++iter;
+        return dryad::node_cast<clauf::block_stmt>(*iter);
+    }
 };
 } // namespace clauf
 
