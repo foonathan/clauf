@@ -92,11 +92,7 @@ public:
         insert_child_after(nullptr, return_type);
     }
 
-    type* return_type()
-    {
-        auto first_child = children().front();
-        return dryad::node_cast<type>(first_child);
-    }
+    DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
 };
 } // namespace clauf
 
@@ -108,16 +104,7 @@ class expr : public dryad::abstract_node_range<dryad::container_node<node>, node
                                                node_kind::last_expr>
 {
 public:
-    clauf::type* type()
-    {
-        auto first_child = children().front();
-        return dryad::node_cast<clauf::type>(first_child);
-    }
-    const clauf::type* type() const
-    {
-        auto first_child = children().front();
-        return dryad::node_cast<clauf::type>(first_child);
-    }
+    DRYAD_CHILD_NODE_GETTER(clauf::type, type, nullptr)
 
 protected:
     explicit expr(dryad::node_ctor ctor, node_kind kind, clauf::type* type) : node_base(ctor, kind)
@@ -155,9 +142,7 @@ public:
     : node_base(ctor, type)
     {
         set_op_impl(op);
-        auto first_child = children().front();
-        insert_child_after(first_child, left);
-        insert_child_after(left, right);
+        insert_children_after(this->type(), left, right);
     }
 
     op_t op() const
@@ -165,18 +150,8 @@ public:
         return op_impl();
     }
 
-    const clauf::expr* left() const
-    {
-        auto first_child = children().front();
-        return dryad::node_cast<clauf::expr>(first_child);
-    }
-
-    const clauf::expr* right() const
-    {
-        auto iter = children().begin();
-        ++iter;
-        return dryad::node_cast<clauf::expr>(*iter);
-    }
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, left, type())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, right, left())
 
 private:
     DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
@@ -202,11 +177,7 @@ public:
         insert_child_after(nullptr, expr);
     }
 
-    const clauf::expr* expr() const
-    {
-        auto first_child = children().front();
-        return dryad::node_cast<clauf::expr>(first_child);
-    }
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
 };
 
 /// A statement that does a builtin action.
@@ -231,11 +202,7 @@ public:
         return builtin_impl();
     }
 
-    const clauf::expr* expr() const
-    {
-        auto first_child = children().front();
-        return dryad::node_cast<clauf::expr>(first_child);
-    }
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
 
 private:
     DRYAD_ATTRIBUTE_USER_DATA16(builtin_t, builtin_impl);
@@ -282,11 +249,7 @@ public:
         _name = name;
     }
 
-    const type* type() const
-    {
-        auto first_child = children().front();
-        return dryad::node_cast<clauf::type>(first_child);
-    }
+    DRYAD_CHILD_NODE_GETTER(clauf::type, type, nullptr)
 
 protected:
     explicit decl(dryad::node_ctor ctor, node_kind kind, ast_symbol name, clauf::type* type)
@@ -307,22 +270,10 @@ public:
                            clauf::block_stmt* block)
     : node_base(ctor, name, type)
     {
-        auto first_child = children().front();
-        insert_child_after(first_child, block);
+        insert_child_after(this->type(), block);
     }
 
-    clauf::block_stmt* body()
-    {
-        auto iter = children().begin();
-        ++iter;
-        return dryad::node_cast<clauf::block_stmt>(*iter);
-    }
-    const clauf::block_stmt* body() const
-    {
-        auto iter = children().begin();
-        ++iter;
-        return dryad::node_cast<clauf::block_stmt>(*iter);
-    }
+    DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, type())
 };
 } // namespace clauf
 
