@@ -41,9 +41,26 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
     auto entry = lauf_asm_declare_block(b, {0, 1});
     lauf_asm_build_block(b, entry);
 
-    // STACK: -
+    dryad::visit_tree(
+        decl->body(),
+        [&](const clauf::block_stmt*) {
+            // Do nothing, children do all the work.
+        },
+        [&](dryad::traverse_event ev, const clauf::expr_stmt*) {
+            if (ev == dryad::traverse_event::exit)
+            {
+                // The underlying expression has been visited, and we need to remove its value from
+                // the stack.
+                lauf_asm_inst_pop(b, 0);
+            }
+        },
+        [&](const clauf::integer_constant_expr* expr) {
+            // Pushes the value of the expression onto the stack.
+            lauf_asm_inst_uint(b, expr->value());
+        });
+
+    // Add an implicit return 0.
     lauf_asm_inst_uint(b, 0);
-    // STACK: 0
     lauf_asm_inst_return(b);
 
     lauf_asm_build_finish(b);

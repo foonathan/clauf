@@ -238,6 +238,12 @@ public:
         ++iter;
         return dryad::node_cast<clauf::block_stmt>(*iter);
     }
+    const clauf::block_stmt* body() const
+    {
+        auto iter = children().begin();
+        ++iter;
+        return dryad::node_cast<clauf::block_stmt>(*iter);
+    }
 };
 } // namespace clauf
 
