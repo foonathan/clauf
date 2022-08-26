@@ -24,9 +24,10 @@ enum class node_kind
 
     //=== expressions ===//
     integer_constant_expr,
+    binary_expr,
 
     first_expr = integer_constant_expr,
-    last_expr  = integer_constant_expr,
+    last_expr  = binary_expr,
 
     //=== statements ===//
     expr_stmt,
@@ -107,7 +108,12 @@ class expr : public dryad::abstract_node_range<dryad::container_node<node>, node
                                                node_kind::last_expr>
 {
 public:
-    const type* type() const
+    clauf::type* type()
+    {
+        auto first_child = children().front();
+        return dryad::node_cast<clauf::type>(first_child);
+    }
+    const clauf::type* type() const
     {
         auto first_child = children().front();
         return dryad::node_cast<clauf::type>(first_child);
@@ -134,6 +140,46 @@ public:
 
 private:
     std::uint64_t _value;
+};
+
+class binary_expr : public dryad::basic_node<node_kind::binary_expr, expr>
+{
+public:
+    enum op_t : std::uint16_t
+    {
+        eq,
+    };
+
+    explicit binary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* left,
+                         clauf::expr* right)
+    : node_base(ctor, type)
+    {
+        set_op_impl(op);
+        auto first_child = children().front();
+        insert_child_after(first_child, left);
+        insert_child_after(left, right);
+    }
+
+    op_t op() const
+    {
+        return op_impl();
+    }
+
+    const clauf::expr* left() const
+    {
+        auto first_child = children().front();
+        return dryad::node_cast<clauf::expr>(first_child);
+    }
+
+    const clauf::expr* right() const
+    {
+        auto iter = children().begin();
+        ++iter;
+        return dryad::node_cast<clauf::expr>(*iter);
+    }
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
 };
 } // namespace clauf
 

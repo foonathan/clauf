@@ -76,7 +76,26 @@ struct integer_constant_expr
         });
 };
 
-using expr = integer_constant_expr;
+struct expr : lexy::expression_production
+{
+    static constexpr auto atom = dsl::p<integer_constant_expr>;
+
+    struct equality : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::eq>(LEXY_LIT("=="));
+        using operand            = dsl::atom;
+    };
+
+    using operation = equality;
+
+    static constexpr auto value = callback<clauf::expr*>( //
+        [](const compiler_state&, clauf::integer_constant_expr* expr) { return expr; },
+        [](const compiler_state& state, clauf::expr* left, clauf::binary_expr::op_t op,
+           clauf::expr* right) {
+            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            return state.ast.create<clauf::binary_expr>(type, op, left, right);
+        });
+};
 } // namespace clauf::grammar
 
 //=== statement parsing ===//

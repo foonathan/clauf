@@ -8,9 +8,32 @@
 #include <lauf/asm/builder.h>
 #include <lauf/asm/type.h>
 #include <lauf/lib/debug.h>
+#include <lauf/lib/int.h>
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
+#include <lauf/runtime/value.h>
 
+//=== builtin lauf instructions ===//
+namespace
+{
+LAUF_RUNTIME_BUILTIN(eq_int, 2, 1,
+                     LAUF_RUNTIME_BUILTIN_NO_PROCESS | LAUF_RUNTIME_BUILTIN_CONSTANT_FOLD, "eq_int",
+                     nullptr)
+{
+    // Stack: lhs rhs => (lhs == rhs)
+    auto lhs = vstack_ptr[1].as_sint;
+    auto rhs = vstack_ptr[0].as_sint;
+
+    auto result = lhs == rhs;
+
+    ++vstack_ptr;
+    vstack_ptr[0].as_sint = result ? 1 : 0;
+
+    LAUF_RUNTIME_BUILTIN_DISPATCH;
+}
+} // namespace
+
+//=== codegen ===//
 namespace
 {
 struct context
@@ -76,9 +99,22 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 }
             }
         },
+        //=== expression ===//
         [&](const clauf::integer_constant_expr* expr) {
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
+        },
+        [&](dryad::traverse_event ev, const clauf::binary_expr* expr) {
+            if (ev == dryad::traverse_event::exit)
+            {
+                // At this point, two values have been pushed onto the stack.
+                switch (expr->op())
+                {
+                case clauf::binary_expr::eq:
+                    lauf_asm_inst_call_builtin(b, eq_int);
+                    break;
+                }
+            }
         });
 
     // Add an implicit return 0.
