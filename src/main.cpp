@@ -57,6 +57,7 @@ int main(const options& opts)
         std::putchar('\n');
     }
 
+    auto exit_code = 0;
     if (!opts.compile_only)
     {
         auto vm = lauf_create_vm(lauf_default_vm_options);
@@ -80,20 +81,13 @@ int main(const options& opts)
         lauf_runtime_value return_code;
         if (!lauf_vm_execute_oneshot(vm, program, nullptr, &return_code))
             return 1;
-
-        if (return_code.as_sint != 0)
-        {
-            std::fprintf(stderr, "Program failed with exit code %d", int(return_code.as_sint));
-            return 1;
-        }
-
-        std::printf("Program succeeded.\n");
+        exit_code = static_cast<int>(return_code.as_sint);
 
         lauf_destroy_vm(vm);
     }
 
     // Exit code 70 is EX_SOFTWARE in sysexits.h
-    return clauf::_detail::todo_reached ? 70 : 0;
+    return clauf::_detail::todo_reached ? 70 : exit_code;
 }
 } // namespace clauf
 
