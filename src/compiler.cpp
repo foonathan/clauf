@@ -62,11 +62,18 @@ namespace clauf::grammar
 {
 struct integer_constant_expr
 {
-    static constexpr auto rule = [] {
-        auto decimal_digits
-            = dsl::integer<std::uint64_t>(dsl::digits<dsl::decimal>.sep(dsl::digit_sep_tick));
+    template <typename Base>
+    static constexpr auto integer
+        = dsl::integer<std::uint64_t>(dsl::digits<Base>.sep(dsl::digit_sep_tick));
 
-        return decimal_digits;
+    static constexpr auto rule = [] {
+        auto decimal_digits = integer<dsl::decimal>;
+        auto octal_digits   = integer<dsl::octal>;
+        auto hex_digits     = (LEXY_LIT("0x") | LEXY_LIT("0X")) >> integer<dsl::hex>;
+        auto binary_digits  = (LEXY_LIT("0b") | LEXY_LIT("0B")) >> integer<dsl::binary>;
+
+        return dsl::peek(dsl::lit_c<'0'>) >> (hex_digits | binary_digits | octal_digits)
+               | dsl::else_ >> decimal_digits;
     }();
 
     static constexpr auto value = callback<clauf::integer_constant_expr*>(
