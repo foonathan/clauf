@@ -85,7 +85,8 @@ struct integer_constant_expr
 
 struct expr : lexy::expression_production
 {
-    static constexpr auto atom = dsl::p<integer_constant_expr>;
+    static constexpr auto atom
+        = dsl::parenthesized(dsl::recurse<expr>) | dsl::else_ >> dsl::p<integer_constant_expr>;
 
     struct multiplicative : dsl::infix_op_left
     {
@@ -145,7 +146,7 @@ struct expr : lexy::expression_production
     using operation = bor;
 
     static constexpr auto value = callback<clauf::expr*>( //
-        [](const compiler_state&, clauf::integer_constant_expr* expr) { return expr; },
+        [](const compiler_state&, clauf::expr* expr) { return expr; },
         [](const compiler_state& state, clauf::expr* left, clauf::binary_expr::op_t op,
            clauf::expr* right) {
             auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
