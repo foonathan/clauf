@@ -87,14 +87,36 @@ struct expr : lexy::expression_production
 {
     static constexpr auto atom = dsl::p<integer_constant_expr>;
 
+    struct multiplicative : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::mul>(LEXY_LIT("*"))
+                                   / dsl::op<clauf::binary_expr::div>(LEXY_LIT("/"))
+                                   / dsl::op<clauf::binary_expr::rem>(LEXY_LIT("%"));
+        using operand = dsl::atom;
+    };
+
+    struct additive : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::add>(LEXY_LIT("+"))
+                                   / dsl::op<clauf::binary_expr::sub>(LEXY_LIT("-"));
+        using operand = multiplicative;
+    };
+
+    struct shift : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::shl>(LEXY_LIT("<<"))
+                                   / dsl::op<clauf::binary_expr::shr>(LEXY_LIT(">>"));
+        using operand = additive;
+    };
+
     struct relational : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::lt>(LEXY_LIT("<"))
-                                   / dsl::op<clauf::binary_expr::le>(LEXY_LIT("<="))
-                                   / dsl::op<clauf::binary_expr::gt>(LEXY_LIT(">"))
-                                   / dsl::op<clauf::binary_expr::gt>(LEXY_LIT(">="));
-
-        using operand = dsl::atom;
+        static constexpr auto op
+            = dsl::op<clauf::binary_expr::lt>(dsl::not_followed_by(LEXY_LIT("<"), LEXY_LIT("<")))
+              / dsl::op<clauf::binary_expr::le>(LEXY_LIT("<="))
+              / dsl::op<clauf::binary_expr::gt>(dsl::not_followed_by(LEXY_LIT(">"), LEXY_LIT(">")))
+              / dsl::op<clauf::binary_expr::gt>(LEXY_LIT(">="));
+        using operand = shift;
     };
 
     struct equality : dsl::infix_op_left
@@ -104,7 +126,23 @@ struct expr : lexy::expression_production
         using operand = relational;
     };
 
-    using operation = equality;
+    struct band : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::band>(LEXY_LIT("&"));
+        using operand            = equality;
+    };
+    struct bxor : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::bxor>(LEXY_LIT("^"));
+        using operand            = band;
+    };
+    struct bor : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::bor>(LEXY_LIT("|"));
+        using operand            = bxor;
+    };
+
+    using operation = bor;
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::integer_constant_expr* expr) { return expr; },

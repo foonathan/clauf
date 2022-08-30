@@ -134,6 +134,18 @@ class binary_expr : public dryad::basic_node<node_kind::binary_expr, expr>
 public:
     enum op_t : std::uint16_t
     {
+        add,
+        sub,
+        mul,
+        div,
+        rem,
+
+        band,
+        bor,
+        bxor,
+        shl,
+        shr,
+
         eq,
         ne,
         lt,

@@ -7,6 +7,7 @@
 
 #include <lauf/asm/builder.h>
 #include <lauf/asm/type.h>
+#include <lauf/lib/bits.h>
 #include <lauf/lib/debug.h>
 #include <lauf/lib/int.h>
 #include <lauf/lib/test.h>
@@ -85,6 +86,40 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
             // At this point, two values have been pushed onto the stack.
             switch (expr->op())
             {
+            case clauf::binary_expr::add:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_sadd(LAUF_LIB_INT_OVERFLOW_PANIC));
+                break;
+            case clauf::binary_expr::sub:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_ssub(LAUF_LIB_INT_OVERFLOW_PANIC));
+                break;
+            case clauf::binary_expr::mul:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
+                break;
+            case clauf::binary_expr::div:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
+                break;
+            case clauf::binary_expr::rem:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_srem);
+                break;
+
+            case clauf::binary_expr::band:
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_and);
+                break;
+            case clauf::binary_expr::bor:
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_or);
+                break;
+            case clauf::binary_expr::bxor:
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_xor);
+                break;
+            case clauf::binary_expr::shl:
+                // Overflow wraps around and is not undefined.
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_shl);
+                break;
+            case clauf::binary_expr::shr:
+                // implementation-defined behavior: arithmetic right shift
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_sshr);
+                break;
+
             case clauf::binary_expr::eq:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_EQ);

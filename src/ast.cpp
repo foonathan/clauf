@@ -64,6 +64,36 @@ void clauf::dump_ast(const ast& ast)
             [&](const binary_expr* expr) {
                 switch (expr->op())
                 {
+                case binary_expr::add:
+                    std::printf("+");
+                    break;
+                case binary_expr::sub:
+                    std::printf("-");
+                    break;
+                case binary_expr::mul:
+                    std::printf("*");
+                    break;
+                case binary_expr::div:
+                    std::printf("/");
+                    break;
+                case binary_expr::rem:
+                    std::printf("%%");
+                    break;
+                case binary_expr::band:
+                    std::printf("&");
+                    break;
+                case binary_expr::bor:
+                    std::printf("|");
+                    break;
+                case binary_expr::bxor:
+                    std::printf("^");
+                    break;
+                case binary_expr::shl:
+                    std::printf("<<");
+                    break;
+                case binary_expr::shr:
+                    std::printf(">>");
+                    break;
                 case binary_expr::eq:
                     std::printf("==");
                     break;
