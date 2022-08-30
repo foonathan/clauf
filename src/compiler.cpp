@@ -88,12 +88,21 @@ struct expr : lexy::expression_production
     static constexpr auto atom
         = dsl::parenthesized(dsl::recurse<expr>) | dsl::else_ >> dsl::p<integer_constant_expr>;
 
+    struct unary : dsl::prefix_op
+    {
+        static constexpr auto op = dsl::op<clauf::unary_expr::plus>(LEXY_LIT("+"))
+                                   / dsl::op<clauf::unary_expr::neg>(LEXY_LIT("-"))
+                                   / dsl::op<clauf::unary_expr::bnot>(LEXY_LIT("~"))
+                                   / dsl::op<clauf::unary_expr::lnot>(LEXY_LIT("!"));
+        using operand = dsl::atom;
+    };
+
     struct multiplicative : dsl::infix_op_left
     {
         static constexpr auto op = dsl::op<clauf::binary_expr::mul>(LEXY_LIT("*"))
                                    / dsl::op<clauf::binary_expr::div>(LEXY_LIT("/"))
                                    / dsl::op<clauf::binary_expr::rem>(LEXY_LIT("%"));
-        using operand = dsl::atom;
+        using operand = unary;
     };
 
     struct additive : dsl::infix_op_left
@@ -147,6 +156,10 @@ struct expr : lexy::expression_production
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
+        [](const compiler_state& state, clauf::unary_expr::op_t op, clauf::expr* child) {
+            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            return state.ast.create<clauf::unary_expr>(type, op, child);
+        },
         [](const compiler_state& state, clauf::expr* left, clauf::binary_expr::op_t op,
            clauf::expr* right) {
             auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);

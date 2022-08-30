@@ -10,8 +10,8 @@ int main()
 
     __clauf_assert 3 > -3;
     __clauf_assert 3 >= -3;
-    __clauf_assert !(3 < 5);
-    __clauf_assert !(3 <= 5);
-    __clauf_assert !(3 == 5);
-    __clauf_assert 3 != 5;
+    __clauf_assert !(3 < -3);
+    __clauf_assert !(3 <= -3);
+    __clauf_assert !(3 == -3);
+    __clauf_assert 3 != -3;
 }

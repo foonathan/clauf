@@ -17,6 +17,8 @@ const char* to_string(clauf::node_kind kind)
         return "builtin type";
     case clauf::node_kind::integer_constant_expr:
         return "integer constant expr";
+    case clauf::node_kind::unary_expr:
+        return "unary expr";
     case clauf::node_kind::binary_expr:
         return "binary expr";
     case clauf::node_kind::expr_stmt:
@@ -61,6 +63,23 @@ void clauf::dump_ast(const ast& ast)
             },
             //=== expr ===//
             [&](const integer_constant_expr* expr) { std::printf("%ld", expr->value()); },
+            [&](const unary_expr* expr) {
+                switch (expr->op())
+                {
+                case unary_expr::plus:
+                    std::printf("+");
+                    break;
+                case unary_expr::neg:
+                    std::printf("-");
+                    break;
+                case unary_expr::bnot:
+                    std::printf("~");
+                    break;
+                case unary_expr::lnot:
+                    std::printf("!");
+                    break;
+                }
+            },
             [&](const binary_expr* expr) {
                 switch (expr->op())
                 {

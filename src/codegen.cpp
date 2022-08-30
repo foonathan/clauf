@@ -82,6 +82,26 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
         },
+        [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
+            // At this point, one value has been pushed onto the stack.
+            switch (expr->op())
+            {
+            case clauf::unary_expr::plus:
+                // Do nothing.
+                break;
+            case clauf::unary_expr::neg:
+                lauf_asm_inst_sint(b, -1);
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
+                break;
+            case clauf::unary_expr::bnot:
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_not);
+                break;
+            case clauf::unary_expr::lnot:
+                // If any bit is set, produce 0, otherwise, produce 1.
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_none_set);
+                break;
+            }
+        },
         [&](dryad::traverse_event_exit, const clauf::binary_expr* expr) {
             // At this point, two values have been pushed onto the stack.
             switch (expr->op())

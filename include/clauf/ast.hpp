@@ -24,6 +24,7 @@ enum class node_kind
 
     //=== expressions ===//
     integer_constant_expr,
+    unary_expr,
     binary_expr,
 
     first_expr = integer_constant_expr,
@@ -127,6 +128,35 @@ public:
 
 private:
     std::uint64_t _value;
+};
+
+class unary_expr : public dryad::basic_node<node_kind::unary_expr, expr>
+{
+public:
+    enum op_t : std::uint16_t
+    {
+        plus,
+        neg,
+        bnot, // ~
+        lnot, // !
+    };
+
+    explicit unary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* child)
+    : node_base(ctor, type)
+    {
+        set_op_impl(op);
+        insert_child_after(this->type(), child);
+    }
+
+    op_t op() const
+    {
+        return op_impl();
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, child, type())
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
 };
 
 class binary_expr : public dryad::basic_node<node_kind::binary_expr, expr>
