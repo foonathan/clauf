@@ -26,6 +26,7 @@ enum class node_kind
     integer_constant_expr,
     unary_expr,
     binary_expr,
+    sequenced_binary_expr,
     conditional_expr,
 
     first_expr = integer_constant_expr,
@@ -187,6 +188,36 @@ public:
 
     explicit binary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* left,
                          clauf::expr* right)
+    : node_base(ctor, type)
+    {
+        set_op_impl(op);
+        insert_children_after(this->type(), left, right);
+    }
+
+    op_t op() const
+    {
+        return op_impl();
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, left, type())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, right, left())
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
+};
+
+class sequenced_binary_expr : public dryad::basic_node<node_kind::sequenced_binary_expr, expr>
+{
+public:
+    enum op_t : std::uint16_t
+    {
+        land,
+        lor,
+        comma,
+    };
+
+    explicit sequenced_binary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op,
+                                   clauf::expr* left, clauf::expr* right)
     : node_base(ctor, type)
     {
         set_op_impl(op);

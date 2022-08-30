@@ -166,6 +166,65 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 break;
             }
         },
+        [&](dryad::child_visitor<clauf::node_kind> visitor,
+            const clauf::sequenced_binary_expr*    expr) {
+            switch (expr->op())
+            {
+            case clauf::sequenced_binary_expr::land: {
+                auto cur_stack_size     = lauf_asm_build_get_vstack_size(b);
+                auto block_eval_right   = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
+                auto block_shortcircuit = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
+                auto block_end          = lauf_asm_declare_block(b, uint8_t(cur_stack_size + 1));
+
+                visitor(expr->left());
+                lauf_asm_inst_branch2(b, block_eval_right, block_shortcircuit);
+
+                // We only reach this point if left has been true, so whatever is the result of
+                // right is our result.
+                lauf_asm_build_block(b, block_eval_right);
+                visitor(expr->right());
+                lauf_asm_inst_jump(b, block_end);
+
+                // We only reach this point if left has been false, so that's the result.
+                lauf_asm_build_block(b, block_shortcircuit);
+                lauf_asm_inst_uint(b, 0);
+                lauf_asm_inst_jump(b, block_end);
+
+                lauf_asm_build_block(b, block_end);
+                break;
+            }
+
+            case clauf::sequenced_binary_expr::lor: {
+                auto cur_stack_size     = lauf_asm_build_get_vstack_size(b);
+                auto block_eval_right   = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
+                auto block_shortcircuit = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
+                auto block_end          = lauf_asm_declare_block(b, uint8_t(cur_stack_size + 1));
+
+                visitor(expr->left());
+                lauf_asm_inst_branch2(b, block_shortcircuit, block_eval_right);
+
+                // We only reach this point if left has been true, so that's the result.
+                lauf_asm_build_block(b, block_shortcircuit);
+                lauf_asm_inst_uint(b, 1);
+                lauf_asm_inst_jump(b, block_end);
+
+                // We only reach this point if left has been false, so whatever is the result of
+                // right is our result.
+                lauf_asm_build_block(b, block_eval_right);
+                visitor(expr->right());
+                lauf_asm_inst_jump(b, block_end);
+
+                lauf_asm_build_block(b, block_end);
+                break;
+            }
+
+            case clauf::sequenced_binary_expr::comma:
+                visitor(expr->left());
+                lauf_asm_inst_pop(b, 0);
+                visitor(expr->right());
+                break;
+            }
+        },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
             auto block_if_true  = lauf_asm_declare_block(b, uint8_t(cur_stack_size));

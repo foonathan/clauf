@@ -21,6 +21,8 @@ const char* to_string(clauf::node_kind kind)
         return "unary expr";
     case clauf::node_kind::binary_expr:
         return "binary expr";
+    case clauf::node_kind::sequenced_binary_expr:
+        return "sequenced binary expr";
     case clauf::node_kind::conditional_expr:
         return "conditional expr";
     case clauf::node_kind::expr_stmt:
@@ -132,6 +134,20 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 case binary_expr::ge:
                     std::printf(">=");
+                    break;
+                }
+            },
+            [&](const sequenced_binary_expr* expr) {
+                switch (expr->op())
+                {
+                case sequenced_binary_expr::land:
+                    std::printf("&&");
+                    break;
+                case sequenced_binary_expr::lor:
+                    std::printf("||");
+                    break;
+                case sequenced_binary_expr::comma:
+                    std::printf(",");
                     break;
                 }
             },

@@ -152,14 +152,31 @@ struct expr : lexy::expression_production
         using operand            = bxor;
     };
 
+    struct land : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::sequenced_binary_expr::land>(LEXY_LIT("&&"));
+        using operand            = bor;
+    };
+    struct lor : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::sequenced_binary_expr::lor>(LEXY_LIT("||"));
+        using operand            = land;
+    };
+
     struct conditional : dsl::infix_op_right
     {
         static constexpr auto op
             = dsl::op<void>(LEXY_LIT("?") >> dsl::recurse<expr> + LEXY_LIT(":"));
-        using operand = bor;
+        using operand = lor;
     };
 
-    using operation = conditional;
+    struct comma : dsl::infix_op_right
+    {
+        static constexpr auto op = dsl::op<clauf::sequenced_binary_expr::comma>(LEXY_LIT(","));
+        using operand            = conditional;
+    };
+
+    using operation = comma;
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
@@ -171,6 +188,11 @@ struct expr : lexy::expression_production
            clauf::expr* right) {
             auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::binary_expr>(type, op, left, right);
+        },
+        [](const compiler_state& state, clauf::expr* left, clauf::sequenced_binary_expr::op_t op,
+           clauf::expr* right) {
+            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            return state.ast.create<clauf::sequenced_binary_expr>(type, op, left, right);
         },
         [](const compiler_state& state, clauf::expr* condition, clauf::expr* if_true,
            clauf::expr* if_false) {
