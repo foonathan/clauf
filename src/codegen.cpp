@@ -172,9 +172,9 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
             {
             case clauf::sequenced_binary_expr::land: {
                 auto cur_stack_size     = lauf_asm_build_get_vstack_size(b);
-                auto block_eval_right   = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
-                auto block_shortcircuit = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
-                auto block_end          = lauf_asm_declare_block(b, uint8_t(cur_stack_size + 1));
+                auto block_eval_right   = lauf_asm_declare_block(b, cur_stack_size);
+                auto block_shortcircuit = lauf_asm_declare_block(b, cur_stack_size);
+                auto block_end          = lauf_asm_declare_block(b, cur_stack_size + 1);
 
                 visitor(expr->left());
                 lauf_asm_inst_branch2(b, block_eval_right, block_shortcircuit);
@@ -196,9 +196,9 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
 
             case clauf::sequenced_binary_expr::lor: {
                 auto cur_stack_size     = lauf_asm_build_get_vstack_size(b);
-                auto block_eval_right   = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
-                auto block_shortcircuit = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
-                auto block_end          = lauf_asm_declare_block(b, uint8_t(cur_stack_size + 1));
+                auto block_eval_right   = lauf_asm_declare_block(b, cur_stack_size);
+                auto block_shortcircuit = lauf_asm_declare_block(b, cur_stack_size);
+                auto block_end          = lauf_asm_declare_block(b, cur_stack_size + 1);
 
                 visitor(expr->left());
                 lauf_asm_inst_branch2(b, block_shortcircuit, block_eval_right);
@@ -227,9 +227,9 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
-            auto block_if_true  = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
-            auto block_if_false = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
-            auto block_end      = lauf_asm_declare_block(b, uint8_t(cur_stack_size + 1));
+            auto block_if_true  = lauf_asm_declare_block(b, cur_stack_size);
+            auto block_if_false = lauf_asm_declare_block(b, cur_stack_size);
+            auto block_end      = lauf_asm_declare_block(b, cur_stack_size + 1);
 
             // Evaluate the condition and push it onto the stack.
             visitor(expr->condition());
