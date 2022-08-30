@@ -87,10 +87,21 @@ struct expr : lexy::expression_production
 {
     static constexpr auto atom = dsl::p<integer_constant_expr>;
 
+    struct relational : dsl::infix_op_left
+    {
+        static constexpr auto op = dsl::op<clauf::binary_expr::lt>(LEXY_LIT("<"))
+                                   / dsl::op<clauf::binary_expr::le>(LEXY_LIT("<="))
+                                   / dsl::op<clauf::binary_expr::gt>(LEXY_LIT(">"))
+                                   / dsl::op<clauf::binary_expr::gt>(LEXY_LIT(">="));
+
+        using operand = dsl::atom;
+    };
+
     struct equality : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::eq>(LEXY_LIT("=="));
-        using operand            = dsl::atom;
+        static constexpr auto op = dsl::op<clauf::binary_expr::eq>(LEXY_LIT("=="))
+                                   / dsl::op<clauf::binary_expr::ne>(LEXY_LIT("!="));
+        using operand = relational;
     };
 
     using operation = equality;

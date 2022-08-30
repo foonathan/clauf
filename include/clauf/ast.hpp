@@ -135,6 +135,11 @@ public:
     enum op_t : std::uint16_t
     {
         eq,
+        ne,
+        lt,
+        le,
+        gt,
+        ge,
     };
 
     explicit binary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* left,

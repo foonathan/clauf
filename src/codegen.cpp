@@ -13,26 +13,6 @@
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/value.h>
 
-//=== builtin lauf instructions ===//
-namespace
-{
-LAUF_RUNTIME_BUILTIN(eq_int, 2, 1,
-                     LAUF_RUNTIME_BUILTIN_NO_PROCESS | LAUF_RUNTIME_BUILTIN_CONSTANT_FOLD, "eq_int",
-                     nullptr)
-{
-    // Stack: lhs rhs => (lhs == rhs)
-    auto lhs = vstack_ptr[1].as_sint;
-    auto rhs = vstack_ptr[0].as_sint;
-
-    auto result = lhs == rhs;
-
-    ++vstack_ptr;
-    vstack_ptr[0].as_sint = result ? 1 : 0;
-
-    LAUF_RUNTIME_BUILTIN_DISPATCH;
-}
-} // namespace
-
 //=== codegen ===//
 namespace
 {
@@ -106,7 +86,28 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
             switch (expr->op())
             {
             case clauf::binary_expr::eq:
-                lauf_asm_inst_call_builtin(b, eq_int);
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+                lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_EQ);
+                break;
+            case clauf::binary_expr::ne:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+                lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_NE);
+                break;
+            case clauf::binary_expr::lt:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+                lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_LT);
+                break;
+            case clauf::binary_expr::le:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+                lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_LE);
+                break;
+            case clauf::binary_expr::gt:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+                lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_GT);
+                break;
+            case clauf::binary_expr::ge:
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+                lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_GE);
                 break;
             }
         });

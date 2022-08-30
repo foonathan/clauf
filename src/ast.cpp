@@ -67,6 +67,21 @@ void clauf::dump_ast(const ast& ast)
                 case binary_expr::eq:
                     std::printf("==");
                     break;
+                case binary_expr::ne:
+                    std::printf("!=");
+                    break;
+                case binary_expr::lt:
+                    std::printf("<");
+                    break;
+                case binary_expr::le:
+                    std::printf("<=");
+                    break;
+                case binary_expr::gt:
+                    std::printf(">");
+                    break;
+                case binary_expr::ge:
+                    std::printf(">=");
+                    break;
                 }
             },
             //=== stmt ===//
