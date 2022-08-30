@@ -64,7 +64,7 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
     auto b = ctx.builder;
     lauf_asm_build(b, ctx.mod, fn);
 
-    auto entry = lauf_asm_declare_block(b, {0, 1});
+    auto entry = lauf_asm_declare_block(b, 0);
     lauf_asm_build_block(b, entry);
 
     dryad::visit_tree(
