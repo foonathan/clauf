@@ -69,6 +69,9 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
 
     dryad::visit_tree(
         decl->body(),
+        // We don't need to do any codegen for any types in the tree.
+        dryad::ignore_node<clauf::type>,
+        //=== statements ===//
         [&](const clauf::block_stmt*) {
             // Do nothing, children do all the work.
         },
