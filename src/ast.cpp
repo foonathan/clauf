@@ -21,6 +21,8 @@ const char* to_string(clauf::node_kind kind)
         return "unary expr";
     case clauf::node_kind::binary_expr:
         return "binary expr";
+    case clauf::node_kind::conditional_expr:
+        return "conditional expr";
     case clauf::node_kind::expr_stmt:
         return "expression stmt";
     case clauf::node_kind::builtin_stmt:

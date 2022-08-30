@@ -165,6 +165,29 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_GE);
                 break;
             }
+        },
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
+            auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
+            auto block_if_true  = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
+            auto block_if_false = lauf_asm_declare_block(b, uint8_t(cur_stack_size));
+            auto block_end      = lauf_asm_declare_block(b, uint8_t(cur_stack_size + 1));
+
+            // Evaluate the condition and push it onto the stack.
+            visitor(expr->condition());
+            lauf_asm_inst_branch2(b, block_if_true, block_if_false);
+
+            // Evaluate the if_true case.
+            lauf_asm_build_block(b, block_if_true);
+            visitor(expr->if_true());
+            lauf_asm_inst_jump(b, block_end);
+
+            // Evaluate the if_false case.
+            lauf_asm_build_block(b, block_if_false);
+            visitor(expr->if_false());
+            lauf_asm_inst_jump(b, block_end);
+
+            // Continue, but in the new block.
+            lauf_asm_build_block(b, block_end);
         });
 
     // Add an implicit return 0.

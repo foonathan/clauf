@@ -152,7 +152,14 @@ struct expr : lexy::expression_production
         using operand            = bxor;
     };
 
-    using operation = bor;
+    struct conditional : dsl::infix_op_right
+    {
+        static constexpr auto op
+            = dsl::op<void>(LEXY_LIT("?") >> dsl::recurse<expr> + LEXY_LIT(":"));
+        using operand = bor;
+    };
+
+    using operation = conditional;
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
@@ -164,6 +171,11 @@ struct expr : lexy::expression_production
            clauf::expr* right) {
             auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::binary_expr>(type, op, left, right);
+        },
+        [](const compiler_state& state, clauf::expr* condition, clauf::expr* if_true,
+           clauf::expr* if_false) {
+            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            return state.ast.create<clauf::conditional_expr>(type, condition, if_true, if_false);
         });
 };
 } // namespace clauf::grammar

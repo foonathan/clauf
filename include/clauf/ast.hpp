@@ -26,9 +26,10 @@ enum class node_kind
     integer_constant_expr,
     unary_expr,
     binary_expr,
+    conditional_expr,
 
     first_expr = integer_constant_expr,
-    last_expr  = binary_expr,
+    last_expr  = conditional_expr,
 
     //=== statements ===//
     expr_stmt,
@@ -202,6 +203,21 @@ public:
 
 private:
     DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
+};
+
+class conditional_expr : public dryad::basic_node<node_kind::conditional_expr, expr>
+{
+public:
+    explicit conditional_expr(dryad::node_ctor ctor, clauf::type* type, clauf::expr* condition,
+                              clauf::expr* if_true, clauf::expr* if_false)
+    : node_base(ctor, type)
+    {
+        insert_children_after(this->type(), condition, if_true, if_false);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, condition, type())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, if_true, condition())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, if_false, if_true())
 };
 } // namespace clauf
 
