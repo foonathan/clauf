@@ -125,7 +125,7 @@ struct expr : lexy::expression_production
             = dsl::op<clauf::binary_expr::lt>(dsl::not_followed_by(LEXY_LIT("<"), LEXY_LIT("<")))
               / dsl::op<clauf::binary_expr::le>(LEXY_LIT("<="))
               / dsl::op<clauf::binary_expr::gt>(dsl::not_followed_by(LEXY_LIT(">"), LEXY_LIT(">")))
-              / dsl::op<clauf::binary_expr::gt>(LEXY_LIT(">="));
+              / dsl::op<clauf::binary_expr::ge>(LEXY_LIT(">="));
         using operand = shift;
     };
 
