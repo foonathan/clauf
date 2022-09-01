@@ -62,6 +62,17 @@ constexpr auto callback(Callback... cb)
 {
     return lexy::bind(lexy::callback<ReturnType>(cb...), lexy::parse_state, lexy::values);
 }
+template <typename T>
+constexpr auto construct = callback<T*>(
+    [](const compiler_state& state, auto&& arg) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(arg)>, lexy::nullopt>)
+            return state.ast.create<T>();
+        else
+            return state.ast.create<T>(DRYAD_FWD(arg));
+    },
+    [](const compiler_state& state, auto&&... args) {
+        return state.ast.create<T>(DRYAD_FWD(args)...);
+    });
 } // namespace
 
 namespace clauf::grammar
@@ -96,10 +107,7 @@ namespace clauf::grammar
 struct builtin_type
 {
     static constexpr auto rule  = dsl::symbol<kw_builtin_types>;
-    static constexpr auto value = callback<clauf::builtin_type*>(
-        [](const compiler_state& state, clauf::builtin_type::type_kind_t kind) {
-            return state.ast.create<clauf::builtin_type>(kind);
-        });
+    static constexpr auto value = construct<clauf::builtin_type>;
 };
 
 using type_specifier = builtin_type;
@@ -322,33 +330,21 @@ struct decl_stmt
 
 struct expr_stmt
 {
-    static constexpr auto rule = dsl::p<expr> + dsl::semicolon;
-    static constexpr auto value
-        = callback<clauf::expr_stmt*>([](const compiler_state& state, clauf::expr* expr) {
-              return state.ast.create<clauf::expr_stmt>(expr);
-          });
+    static constexpr auto rule  = dsl::p<expr> + dsl::semicolon;
+    static constexpr auto value = construct<clauf::expr_stmt>;
 };
 
 struct builtin_stmt
 {
     static constexpr auto rule  = dsl::symbol<kw_builtin_stmts> >> dsl::p<expr> + dsl::semicolon;
-    static constexpr auto value = callback<clauf::builtin_stmt*>(
-        [](const compiler_state& state, clauf::builtin_stmt::builtin_t builtin, clauf::expr* expr) {
-            return state.ast.create<clauf::builtin_stmt>(builtin, expr);
-        });
+    static constexpr auto value = construct<clauf::builtin_stmt>;
 };
 
 struct block_stmt
 {
     static constexpr auto rule = dsl::curly_bracketed.opt_list(dsl::recurse<stmt>);
 
-    static constexpr auto value = lexy::as_list<stmt_list> >> callback<clauf::block_stmt*>(
-                                      [](const compiler_state& state, lexy::nullopt) {
-                                          return state.ast.create<clauf::block_stmt>();
-                                      },
-                                      [](const compiler_state& state, auto stmts) {
-                                          return state.ast.create<clauf::block_stmt>(stmts);
-                                      });
+    static constexpr auto value = lexy::as_list<stmt_list> >> construct<clauf::block_stmt>;
 };
 
 struct stmt
@@ -464,11 +460,7 @@ struct translation_unit
 
     static constexpr auto rule = dsl::terminator(dsl::eof).list(dsl::p<function_definition>);
     static constexpr auto value
-        = lexy::as_list<clauf::decl_list> >> callback<void>([](const compiler_state& state,
-                                                               clauf::decl_list      decls) {
-              auto tu = state.ast.create<clauf::translation_unit>(decls);
-              state.ast.tree.set_root(tu);
-          });
+        = lexy::as_list<clauf::decl_list> >> construct<clauf::translation_unit>;
 };
 } // namespace clauf::grammar
 
@@ -480,6 +472,7 @@ std::optional<clauf::ast> clauf::compile(const buffer& input)
     if (!result || state.errored)
         return std::nullopt;
 
+    state.ast.tree.set_root(result.value());
     return std::move(state.ast);
 }
 
