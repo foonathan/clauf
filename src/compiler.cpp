@@ -3,8 +3,10 @@
 
 #include <clauf/compiler.hpp>
 
+#include <string>
 #include <vector>
 
+#include <dryad/symbol_table.hpp>
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
 #include <lexy/dsl.hpp>
@@ -48,8 +50,15 @@ namespace
 {
 struct compiler_state
 {
-    mutable clauf::ast                          ast;
-    mutable dryad::tree<clauf::declarator_kind> decl_tree;
+    mutable lexy_ext::diagnostic_writer<lexy::buffer<lexy::utf8_encoding>> diag;
+    mutable clauf::ast                                                     ast;
+    mutable dryad::tree<clauf::declarator_kind>                            decl_tree;
+    mutable dryad::symbol_table<clauf::ast_symbol, clauf::decl*>           local_symbols;
+    mutable bool                                                           errored = false;
+
+    compiler_state(const lexy::buffer<lexy::utf8_encoding>& input)
+    : diag(input, {lexy::visualize_fancy})
+    {}
 };
 
 template <typename ReturnType, typename... Callback>
@@ -247,7 +256,24 @@ struct decl_stmt
         [](const compiler_state& state, std::vector<clauf::decl*>&& decls) {
             auto result = state.ast.create<clauf::decl_stmt>();
             for (auto decl : decls)
+            {
                 result->add_declaration(decl);
+
+                auto shadowed = state.local_symbols.insert_or_shadow(decl->name(), decl);
+                if (shadowed != nullptr)
+                {
+                    auto out = lexy::cfile_output_iterator{stderr};
+                    state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
+                                             [&](auto, lexy::visualization_options) {
+                                                 auto name = decl->name().c_str(state.ast.symbols);
+                                                 std::fprintf(stderr,
+                                                              "duplicate local declaration '%s'",
+                                                              name);
+                                                 return out;
+                                             });
+                    state.errored = true;
+                }
+            }
             return result;
         });
 };
@@ -304,8 +330,10 @@ struct name
                                                     dsl::literal_set(kw_builtin_stmts));
     static constexpr auto value
         = callback<clauf::ast_symbol>([](const compiler_state& state, auto lexeme) {
-              auto ptr = reinterpret_cast<const char*>(lexeme.data());
-              return state.ast.symbols.intern(ptr, lexeme.size());
+              std::string str;
+              for (auto c : lexeme)
+                  str.push_back(c);
+              return state.ast.symbols.intern(str.c_str(), lexeme.size());
           });
 };
 
@@ -372,7 +400,15 @@ struct declaration
 
 struct function_definition
 {
-    static constexpr auto rule = dsl::p<type_specifier> + dsl::p<declarator> + dsl::p<block_stmt>;
+    struct function_start
+    {
+        static constexpr auto rule = LEXY_LIT("");
+        static constexpr auto value
+            = callback<void>([](const compiler_state& state) { state.local_symbols = {}; });
+    };
+
+    static constexpr auto rule
+        = dsl::p<type_specifier> + dsl::p<declarator> + dsl::p<function_start> + dsl::p<block_stmt>;
 
     static constexpr auto value
         = callback<clauf::function_decl*>([](const compiler_state& state, clauf::type* type,
@@ -415,10 +451,10 @@ struct translation_unit
 
 std::optional<clauf::ast> clauf::compile(const lexy::buffer<lexy::utf8_encoding>& input)
 {
-    compiler_state state;
+    compiler_state state(input);
     auto           result
         = lexy::parse<clauf::grammar::translation_unit>(input, state, lexy_ext::report_error);
-    if (!result)
+    if (!result || state.errored)
         return std::nullopt;
 
     return std::move(state.ast);
