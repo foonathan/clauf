@@ -5,6 +5,7 @@
 
 #include <clauf/ast.hpp>
 
+#include <dryad/node_map.hpp>
 #include <lauf/asm/builder.h>
 #include <lauf/asm/type.h>
 #include <lauf/lib/bits.h>
@@ -41,6 +42,8 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
 {
     auto name = decl->name().c_str(ctx.ast->symbols);
     auto fn   = lauf_asm_add_function(ctx.mod, name, {0, 1});
+
+    dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
 
     auto b = ctx.builder;
     lauf_asm_build(b, ctx.mod, fn);
@@ -79,15 +82,23 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
         },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
-        [&](const clauf::variable_decl*) {
+        [&](const clauf::variable_decl* decl) {
             // TODO: handle types other than int
             auto var = lauf_asm_build_local(b, LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
-            (void)var;
+            local_vars.insert(decl, var);
         },
         //=== expression ===//
         [&](const clauf::integer_constant_expr* expr) {
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
+        },
+        [&](const clauf::identifier_expr* expr) {
+            auto var = local_vars.lookup(expr->declaration());
+            assert(var != nullptr);
+
+            // Push the value of var onto the stack.
+            lauf_asm_inst_local_addr(b, *var);
+            lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
         },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
             // At this point, one value has been pushed onto the stack.

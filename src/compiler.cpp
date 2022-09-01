@@ -81,6 +81,20 @@ constexpr auto kw_builtin_types
 constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_stmt::print)
                                       .map(LEXY_LIT("__clauf_assert"), clauf::builtin_stmt::assert);
+
+struct name
+{
+    static constexpr auto rule = identifier.reserve(dsl::literal_set(kw_builtin_types),
+                                                    dsl::literal_set(kw_builtin_stmts));
+    static constexpr auto value
+        = callback<clauf::ast_symbol>([](const compiler_state& state, auto lexeme) {
+              std::string str;
+              for (auto c : lexeme)
+                  str.push_back(c);
+              return state.ast.symbols.intern(str.c_str(), lexeme.size());
+          });
+};
+
 } // namespace clauf::grammar
 
 //=== type parsing ===//
@@ -124,10 +138,36 @@ struct integer_constant_expr
         });
 };
 
+struct identifier_expr
+{
+    static constexpr auto rule = dsl::p<name>;
+
+    static constexpr auto value
+        = callback<clauf::identifier_expr*>([](const compiler_state& state, ast_symbol name) {
+              auto decl = state.local_symbols.lookup(name);
+              if (decl == nullptr)
+              {
+                  auto out = lexy::cfile_output_iterator{stderr};
+                  state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
+                                           [&](auto, lexy::visualization_options) {
+                                               auto str = name.c_str(state.ast.symbols);
+                                               std::fprintf(stderr, "unknown identifier '%s'", str);
+                                               return out;
+                                           });
+                  state.errored = true;
+              }
+
+              // TODO: don't hardcode type, copy type of declaration instead
+              auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+              return state.ast.create<clauf::identifier_expr>(type, decl);
+          });
+};
+
 struct expr : lexy::expression_production
 {
     static constexpr auto atom
-        = dsl::parenthesized(dsl::recurse<expr>) | dsl::else_ >> dsl::p<integer_constant_expr>;
+        = dsl::parenthesized(dsl::recurse<expr>)
+          | dsl::p<identifier_expr> | dsl::else_ >> dsl::p<integer_constant_expr>;
 
     struct unary : dsl::prefix_op
     {
@@ -324,19 +364,6 @@ struct stmt
 //=== declaration ===//
 namespace clauf::grammar
 {
-struct name
-{
-    static constexpr auto rule = identifier.reserve(dsl::literal_set(kw_builtin_types),
-                                                    dsl::literal_set(kw_builtin_stmts));
-    static constexpr auto value
-        = callback<clauf::ast_symbol>([](const compiler_state& state, auto lexeme) {
-              std::string str;
-              for (auto c : lexeme)
-                  str.push_back(c);
-              return state.ast.symbols.intern(str.c_str(), lexeme.size());
-          });
-};
-
 struct declarator : lexy::expression_production
 {
     static constexpr auto atom = dsl::p<name> | dsl::parenthesized(dsl::recurse<declarator>);

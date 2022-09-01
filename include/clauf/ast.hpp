@@ -24,6 +24,7 @@ enum class node_kind
 
     //=== expressions ===//
     integer_constant_expr,
+    identifier_expr,
     unary_expr,
     binary_expr,
     sequenced_binary_expr,
@@ -104,6 +105,8 @@ public:
 //=== expr ===//
 namespace clauf
 {
+class decl;
+
 /// Base class for all expressions.
 class expr : public dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_expr,
                                                node_kind::last_expr>
@@ -132,6 +135,23 @@ public:
 
 private:
     std::uint64_t _value;
+};
+
+/// A name, which refers to a declaration, e.g. `int i`
+class identifier_expr : public dryad::basic_node<node_kind::identifier_expr, expr>
+{
+public:
+    explicit identifier_expr(dryad::node_ctor ctor, clauf::type* ty, clauf::decl* decl)
+    : node_base(ctor, ty), _decl(decl)
+    {}
+
+    clauf::decl* declaration() const
+    {
+        return _decl;
+    }
+
+private:
+    clauf::decl* _decl;
 };
 
 class unary_expr : public dryad::basic_node<node_kind::unary_expr, expr>
