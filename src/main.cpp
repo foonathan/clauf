@@ -29,7 +29,7 @@ struct options
 
 int main(const options& opts)
 {
-    auto file = lexy::read_file<lexy::utf8_encoding>(opts.input.c_str());
+    auto file = lexy::read_file<lexy::utf8_char_encoding>(opts.input.c_str());
     if (!file)
     {
         std::fprintf(stderr, "error: input file '%s' not found.\n", opts.input.c_str());

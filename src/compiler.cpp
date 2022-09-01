@@ -50,15 +50,13 @@ namespace
 {
 struct compiler_state
 {
-    mutable lexy_ext::diagnostic_writer<lexy::buffer<lexy::utf8_encoding>> diag;
-    mutable clauf::ast                                                     ast;
-    mutable dryad::tree<clauf::declarator_kind>                            decl_tree;
-    mutable dryad::symbol_table<clauf::ast_symbol, clauf::decl*>           local_symbols;
-    mutable bool                                                           errored = false;
+    mutable lexy_ext::diagnostic_writer<clauf::buffer>           diag;
+    mutable clauf::ast                                           ast;
+    mutable dryad::tree<clauf::declarator_kind>                  decl_tree;
+    mutable dryad::symbol_table<clauf::ast_symbol, clauf::decl*> local_symbols;
+    mutable bool                                                 errored = false;
 
-    compiler_state(const lexy::buffer<lexy::utf8_encoding>& input)
-    : diag(input, {lexy::visualize_fancy})
-    {}
+    compiler_state(const clauf::buffer& input) : diag(input, {lexy::visualize_fancy}) {}
 };
 
 template <typename ReturnType, typename... Callback>
@@ -88,10 +86,7 @@ struct name
                                                     dsl::literal_set(kw_builtin_stmts));
     static constexpr auto value
         = callback<clauf::ast_symbol>([](const compiler_state& state, auto lexeme) {
-              std::string str;
-              for (auto c : lexeme)
-                  str.push_back(c);
-              return state.ast.symbols.intern(str.c_str(), lexeme.size());
+              return state.ast.symbols.intern(lexeme.data(), lexeme.size());
           });
 };
 
@@ -488,7 +483,7 @@ struct translation_unit
 };
 } // namespace clauf::grammar
 
-std::optional<clauf::ast> clauf::compile(const lexy::buffer<lexy::utf8_encoding>& input)
+std::optional<clauf::ast> clauf::compile(const buffer& input)
 {
     compiler_state state(input);
     auto           result
