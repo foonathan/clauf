@@ -265,6 +265,25 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
 
             // Continue, but in the new block.
             lauf_asm_build_block(b, block_end);
+        },
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::assignment_expr* expr) {
+            // Push the value we're assigning onto the stack.
+            visitor(expr->rvalue());
+            // We duplicate it, because we also want to return the value.
+            lauf_asm_inst_pick(b, 0);
+
+            // Push the address of the lvalue onto the stack.
+            // TODO: only identifier_expr is an lvalue at the moment
+            dryad::visit_node_all(expr->lvalue(), [&](const clauf::identifier_expr* id) {
+                auto var = local_vars.lookup(id->declaration());
+                assert(var != nullptr);
+                lauf_asm_inst_local_addr(b, *var);
+            });
+
+            // Store the value into address.
+            lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+
+            // We leave the value on the stack.
         });
 
     // Add an implicit return 0.

@@ -251,10 +251,16 @@ struct expr : lexy::expression_production
         using operand = lor;
     };
 
+    struct assignment : dsl::infix_op_right
+    {
+        static constexpr auto op = dsl::op<clauf::assignment_expr::none>(LEXY_LIT("="));
+        using operand            = conditional;
+    };
+
     struct comma : dsl::infix_op_right
     {
         static constexpr auto op = dsl::op<clauf::sequenced_binary_expr::comma>(LEXY_LIT(","));
-        using operand            = conditional;
+        using operand            = assignment;
     };
 
     using operation = comma;
@@ -279,6 +285,12 @@ struct expr : lexy::expression_production
            clauf::expr* if_false) {
             auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::conditional_expr>(type, condition, if_true, if_false);
+        },
+        [](const compiler_state& state, clauf::expr* left, clauf::assignment_expr::op_t op,
+           clauf::expr* right) {
+            // TODO: assert that left is an lvalue
+            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            return state.ast.create<clauf::assignment_expr>(type, op, left, right);
         });
 };
 } // namespace clauf::grammar

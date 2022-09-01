@@ -29,9 +29,10 @@ enum class node_kind
     binary_expr,
     sequenced_binary_expr,
     conditional_expr,
+    assignment_expr,
 
     first_expr = integer_constant_expr,
-    last_expr  = conditional_expr,
+    last_expr  = assignment_expr,
 
     //=== statements ===//
     decl_stmt,
@@ -271,6 +272,34 @@ public:
     DRYAD_CHILD_NODE_GETTER(clauf::expr, condition, type())
     DRYAD_CHILD_NODE_GETTER(clauf::expr, if_true, condition())
     DRYAD_CHILD_NODE_GETTER(clauf::expr, if_false, if_true())
+};
+
+class assignment_expr : public dryad::basic_node<node_kind::assignment_expr, expr>
+{
+public:
+    enum op_t : std::uint16_t
+    {
+        none,
+    };
+
+    explicit assignment_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* lvalue,
+                             clauf::expr* rvalue)
+    : node_base(ctor, type)
+    {
+        set_op_impl(op);
+        insert_children_after(this->type(), lvalue, rvalue);
+    }
+
+    op_t op() const
+    {
+        return op_impl();
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, lvalue, type())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, rvalue, lvalue())
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
 };
 } // namespace clauf
 
