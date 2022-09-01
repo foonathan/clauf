@@ -5,6 +5,11 @@
 
 #include <cstdio>
 
+void clauf::decl_stmt::add_declaration(decl* d)
+{
+    insert_child_after(nullptr, d);
+}
+
 namespace
 {
 const char* to_string(clauf::node_kind kind)
@@ -25,14 +30,18 @@ const char* to_string(clauf::node_kind kind)
         return "sequenced binary expr";
     case clauf::node_kind::conditional_expr:
         return "conditional expr";
+    case clauf::node_kind::decl_stmt:
+        return "decl stmt";
     case clauf::node_kind::expr_stmt:
-        return "expression stmt";
+        return "expr stmt";
     case clauf::node_kind::builtin_stmt:
         return "builtin stmt";
     case clauf::node_kind::block_stmt:
         return "block stmt";
     case clauf::node_kind::function_type:
         return "function type";
+    case clauf::node_kind::variable_decl:
+        return "variable decl";
     case clauf::node_kind::function_decl:
         return "function decl";
     }
@@ -164,7 +173,7 @@ void clauf::dump_ast(const ast& ast)
                 }
             },
             //=== decls ===//
-            [&](const function_decl* d) { std::printf("'%s'", d->name().c_str(ast.symbols)); });
+            [&](const decl* d) { std::printf("'%s'", d->name().c_str(ast.symbols)); });
 
         std::putchar('\n');
         if (ev == dryad::traverse_event::enter)

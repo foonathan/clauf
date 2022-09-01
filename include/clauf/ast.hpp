@@ -33,17 +33,19 @@ enum class node_kind
     last_expr  = conditional_expr,
 
     //=== statements ===//
+    decl_stmt,
     expr_stmt,
     builtin_stmt,
     block_stmt,
 
-    first_stmt = expr_stmt,
+    first_stmt = decl_stmt,
     last_stmt  = block_stmt,
 
     //=== declarations ===//
+    variable_decl,
     function_decl,
 
-    first_decl = function_decl,
+    first_decl = variable_decl,
     last_decl  = function_decl,
 };
 
@@ -255,11 +257,22 @@ public:
 //=== statements ===//
 namespace clauf
 {
+class decl;
+
 /// Base class of all statements.
 struct stmt : dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_stmt,
                                          node_kind::last_stmt>
 {
     DRYAD_ABSTRACT_NODE_CTOR(stmt)
+};
+
+/// A statement that declares (multiple) things e.g. `int i, j;`
+class decl_stmt : public dryad::basic_node<node_kind::decl_stmt, stmt>
+{
+public:
+    DRYAD_NODE_CTOR(decl_stmt);
+
+    void add_declaration(decl* d);
 };
 
 /// A statement that evaluates an expression, e.g. `f();`
@@ -354,6 +367,15 @@ protected:
 
 private:
     ast_symbol _name;
+};
+
+/// A variable declaration.
+class variable_decl : public dryad::basic_node<node_kind::variable_decl, decl>
+{
+public:
+    explicit variable_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type)
+    : node_base(ctor, name, type)
+    {}
 };
 
 /// A function declaration.

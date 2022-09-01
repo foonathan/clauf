@@ -13,11 +13,43 @@
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
 
+//=== declarator tree ===//
+namespace clauf
+{
+enum class declarator_kind
+{
+    name,
+    function,
+};
+
+using declarator = dryad::node<declarator_kind>;
+
+struct name_declarator : dryad::basic_node<declarator_kind::name>
+{
+    ast_symbol name;
+
+    explicit name_declarator(dryad::node_ctor ctor, ast_symbol name) : node_base(ctor), name(name)
+    {}
+};
+
+struct function_declarator
+: dryad::basic_node<declarator_kind::function, dryad::container_node<declarator>>
+{
+    explicit function_declarator(dryad::node_ctor ctor, declarator* child) : node_base(ctor)
+    {
+        insert_child_after(nullptr, child);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(declarator, child, nullptr)
+};
+} // namespace clauf
+
 namespace
 {
 struct compiler_state
 {
-    mutable clauf::ast ast;
+    mutable clauf::ast                          ast;
+    mutable dryad::tree<clauf::declarator_kind> decl_tree;
 };
 
 template <typename ReturnType, typename... Callback>
@@ -54,7 +86,7 @@ struct builtin_type
         });
 };
 
-using type = builtin_type;
+using type_specifier = builtin_type;
 } // namespace clauf::grammar
 
 //=== expression parsing ===//
@@ -206,6 +238,19 @@ struct expr : lexy::expression_production
 namespace clauf::grammar
 {
 struct stmt;
+struct declaration;
+
+struct decl_stmt
+{
+    static constexpr auto rule  = dsl::recurse_branch<declaration>;
+    static constexpr auto value = callback<clauf::decl_stmt*>(
+        [](const compiler_state& state, std::vector<clauf::decl*>&& decls) {
+            auto result = state.ast.create<clauf::decl_stmt>();
+            for (auto decl : decls)
+                result->add_declaration(decl);
+            return result;
+        });
+};
 
 struct expr_stmt
 {
@@ -244,8 +289,8 @@ struct block_stmt
 
 struct stmt
 {
-    static constexpr auto rule
-        = dsl::p<block_stmt> | dsl::p<builtin_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
+    static constexpr auto rule = dsl::p<block_stmt> | dsl::p<builtin_stmt> //
+                                 | dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
     static constexpr auto value = lexy::forward<clauf::stmt*>;
 };
 } // namespace clauf::grammar
@@ -264,20 +309,87 @@ struct name
           });
 };
 
-struct function_decl
+struct declarator : lexy::expression_production
 {
-    static constexpr auto rule
-        = dsl::p<type> + dsl::p<name> + LEXY_LIT("(") + LEXY_LIT(")") + dsl::p<block_stmt>;
+    static constexpr auto atom = dsl::p<name> | dsl::parenthesized(dsl::recurse<declarator>);
 
-    static constexpr auto value
-        = callback<clauf::function_decl*>([](const compiler_state& state, clauf::type* return_type,
-                                             clauf::ast_symbol name, clauf::block_stmt* body) {
-              auto fn_type = state.ast.create<clauf::function_type>(return_type);
-              return state.ast.create<clauf::function_decl>(name, fn_type, body);
-          });
+    struct function_declarator : dsl::postfix_op
+    {
+        static constexpr auto op = dsl::op<function_declarator>(LEXY_LIT("(") >> LEXY_LIT(")"));
+        using operand            = dsl::atom;
+    };
+
+    using operation = function_declarator;
+
+    static constexpr auto value = callback<clauf::declarator*>( //
+        [](const compiler_state&, clauf::declarator* decl) { return decl; },
+        [](const compiler_state& state, clauf::ast_symbol name) {
+            return state.decl_tree.create<clauf::name_declarator>(name);
+        },
+        [](const compiler_state& state, clauf::declarator* child, function_declarator) {
+            return state.decl_tree.create<clauf::function_declarator>(child);
+        });
 };
 
-using decl = function_decl;
+struct declarator_list
+{
+    static constexpr auto rule  = dsl::list(dsl::p<declarator>, dsl::sep(dsl::comma));
+    static constexpr auto value = lexy::as_list<std::vector<clauf::declarator*>>;
+};
+
+struct declaration
+{
+    static constexpr auto rule = dsl::p<type_specifier> >> dsl::p<declarator_list> + dsl::semicolon;
+
+    [[maybe_unused]] static constexpr auto value = callback<std::vector<clauf::decl*>>(
+        [](const compiler_state& state, clauf::type*, std::vector<clauf::declarator*>&& decls) {
+            std::vector<clauf::decl*> result;
+            for (auto decl : decls)
+            {
+                dryad::visit_node(
+                    decl,
+                    [&](clauf::name_declarator* name) {
+                        // TODO: we only have int as type, so just create a new int every time.
+                        auto type
+                            = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
+                        auto var = state.ast.create<clauf::variable_decl>(name->name, type);
+                        result.push_back(var);
+                    },
+                    [](clauf::function_declarator* fn) {
+                        if (auto name = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
+                        {
+                            CLAUF_TODO("create function declaration");
+                        }
+                        else
+                        {
+                            CLAUF_TODO("generate error: function cannot return function");
+                        }
+                    });
+            }
+            return result;
+        });
+};
+
+struct function_definition
+{
+    static constexpr auto rule = dsl::p<type_specifier> + dsl::p<declarator> + dsl::p<block_stmt>;
+
+    static constexpr auto value
+        = callback<clauf::function_decl*>([](const compiler_state& state, clauf::type* type,
+                                             clauf::declarator* decl, clauf::block_stmt* body) {
+              if (auto fn = dryad::node_try_cast<clauf::function_declarator>(decl))
+              {
+                  if (auto named = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
+                  {
+                      auto fn_type = state.ast.create<clauf::function_type>(type);
+                      return state.ast.create<clauf::function_decl>(named->name, fn_type, body);
+                  }
+              }
+
+              CLAUF_TODO("generator error: not a function definition");
+              return static_cast<clauf::function_decl*>(nullptr);
+          });
+};
 } // namespace clauf::grammar
 
 //=== translation unit ===//
@@ -289,7 +401,7 @@ struct translation_unit
                                        | LEXY_LIT("//") >> dsl::until(dsl::newline)
                                        | LEXY_LIT("/*") >> dsl::until(LEXY_LIT("*/"));
 
-    static constexpr auto rule = dsl::terminator(dsl::eof).list(dsl::p<decl>);
+    static constexpr auto rule = dsl::terminator(dsl::eof).list(dsl::p<function_definition>);
     static constexpr auto value
         = lexy::as_list<std::vector<clauf::decl*>> >> callback<void>(
               [](const compiler_state& state, const std::vector<clauf::decl*>& decls) {

@@ -77,6 +77,13 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 break;
             }
         },
+        //=== declarations ===//
+        dryad::ignore_node<clauf::function_decl>,
+        [&](const clauf::variable_decl*) {
+            // TODO: handle types other than int
+            auto var = lauf_asm_build_local(b, LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
+            (void)var;
+        },
         //=== expression ===//
         [&](const clauf::integer_constant_expr* expr) {
             // Pushes the value of the expression onto the stack.
