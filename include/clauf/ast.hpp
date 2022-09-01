@@ -55,6 +55,12 @@ using node = dryad::node<node_kind>;
 
 struct ast_symbol_id;
 using ast_symbol = dryad::symbol<ast_symbol_id, std::uint32_t>;
+
+class decl;
+using decl_list = dryad::unlinked_node_list<decl>;
+
+class stmt;
+using stmt_list = dryad::unlinked_node_list<stmt>;
 } // namespace clauf
 
 //=== types ===//
@@ -106,8 +112,6 @@ public:
 //=== expr ===//
 namespace clauf
 {
-class decl;
-
 /// Base class for all expressions.
 class expr : public dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_expr,
                                                node_kind::last_expr>
@@ -306,12 +310,11 @@ private:
 //=== statements ===//
 namespace clauf
 {
-class decl;
-
 /// Base class of all statements.
-struct stmt : dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_stmt,
-                                         node_kind::last_stmt>
+class stmt : public dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_stmt,
+                                               node_kind::last_stmt>
 {
+public:
     DRYAD_ABSTRACT_NODE_CTOR(stmt)
 };
 
@@ -319,9 +322,21 @@ struct stmt : dryad::abstract_node_range<dryad::container_node<node>, node_kind:
 class decl_stmt : public dryad::basic_node<node_kind::decl_stmt, stmt>
 {
 public:
-    DRYAD_NODE_CTOR(decl_stmt);
+    explicit decl_stmt(dryad::node_ctor ctor, decl_list decls) : node_base(ctor)
+    {
+        insert_child_list_after(nullptr, decls);
+    }
 
-    void add_declaration(decl* d);
+    auto declarations()
+    {
+        auto children = this->children();
+        return dryad::make_node_range<decl>(children.begin(), children.end());
+    }
+    auto declarations() const
+    {
+        auto children = this->children();
+        return dryad::make_node_range<decl>(children.begin(), children.end());
+    }
 };
 
 /// A statement that evaluates an expression, e.g. `f();`
@@ -369,10 +384,9 @@ class block_stmt : public dryad::basic_node<node_kind::block_stmt, stmt>
 {
 public:
     DRYAD_NODE_CTOR(block_stmt)
-
-    void add_stmt_after(stmt* pos, stmt* new_stmt)
+    explicit block_stmt(dryad::node_ctor ctor, stmt_list stmts) : block_stmt(ctor)
     {
-        insert_child_after(pos, new_stmt);
+        this->insert_child_list_after(nullptr, stmts);
     }
 
     auto statements()
@@ -450,11 +464,9 @@ class translation_unit
 : public dryad::basic_node<node_kind::translation_unit, dryad::container_node<node>>
 {
 public:
-    DRYAD_NODE_CTOR(translation_unit)
-
-    void add_declaration(decl* d)
+    explicit translation_unit(dryad::node_ctor ctor, decl_list decls) : node_base(ctor)
     {
-        insert_child_after(nullptr, d);
+        insert_child_list_after(nullptr, decls);
     }
 
     auto declarations()

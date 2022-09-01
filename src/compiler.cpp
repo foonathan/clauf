@@ -3,9 +3,6 @@
 
 #include <clauf/compiler.hpp>
 
-#include <string>
-#include <vector>
-
 #include <dryad/symbol_table.hpp>
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
@@ -24,7 +21,8 @@ enum class declarator_kind
     function,
 };
 
-using declarator = dryad::node<declarator_kind>;
+using declarator      = dryad::node<declarator_kind>;
+using declarator_list = dryad::unlinked_node_list<declarator>;
 
 struct name_declarator : dryad::basic_node<declarator_kind::name>
 {
@@ -299,30 +297,27 @@ struct declaration;
 struct decl_stmt
 {
     static constexpr auto rule  = dsl::recurse_branch<declaration>;
-    static constexpr auto value = callback<clauf::decl_stmt*>(
-        [](const compiler_state& state, std::vector<clauf::decl*>&& decls) {
-            auto result = state.ast.create<clauf::decl_stmt>();
-            for (auto decl : decls)
+    static constexpr auto value = callback<clauf::decl_stmt*>([](const compiler_state& state,
+                                                                 decl_list             decls) {
+        auto result = state.ast.create<clauf::decl_stmt>(decls);
+        for (auto decl : result->declarations())
+        {
+            auto shadowed = state.local_symbols.insert_or_shadow(decl->name(), decl);
+            if (shadowed != nullptr)
             {
-                result->add_declaration(decl);
-
-                auto shadowed = state.local_symbols.insert_or_shadow(decl->name(), decl);
-                if (shadowed != nullptr)
-                {
-                    auto out = lexy::cfile_output_iterator{stderr};
-                    state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
-                                             [&](auto, lexy::visualization_options) {
-                                                 auto name = decl->name().c_str(state.ast.symbols);
-                                                 std::fprintf(stderr,
-                                                              "duplicate local declaration '%s'",
-                                                              name);
-                                                 return out;
-                                             });
-                    state.errored = true;
-                }
+                auto out = lexy::cfile_output_iterator{stderr};
+                state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
+                                         [&](auto, lexy::visualization_options) {
+                                             auto name = decl->name().c_str(state.ast.symbols);
+                                             std::fprintf(stderr,
+                                                          "duplicate local declaration '%s'", name);
+                                             return out;
+                                         });
+                state.errored = true;
             }
-            return result;
-        });
+        }
+        return result;
+    });
 };
 
 struct expr_stmt
@@ -347,17 +342,13 @@ struct block_stmt
 {
     static constexpr auto rule = dsl::curly_bracketed.opt_list(dsl::recurse<stmt>);
 
-    static constexpr auto value
-        = lexy::as_list<std::vector<clauf::stmt*>> >> callback<clauf::block_stmt*>(
-              [](const compiler_state& state, lexy::nullopt) {
-                  return state.ast.create<clauf::block_stmt>();
-              },
-              [](const compiler_state& state, auto&& stmts) {
-                  auto result = state.ast.create<clauf::block_stmt>();
-                  for (auto i = 0u; i < stmts.size(); ++i)
-                      result->add_stmt_after(i == 0 ? nullptr : stmts[i - 1], stmts[i]);
-                  return result;
-              });
+    static constexpr auto value = lexy::as_list<stmt_list> >> callback<clauf::block_stmt*>(
+                                      [](const compiler_state& state, lexy::nullopt) {
+                                          return state.ast.create<clauf::block_stmt>();
+                                      },
+                                      [](const compiler_state& state, auto stmts) {
+                                          return state.ast.create<clauf::block_stmt>(stmts);
+                                      });
 };
 
 struct stmt
@@ -396,16 +387,16 @@ struct declarator : lexy::expression_production
 struct declarator_list
 {
     static constexpr auto rule  = dsl::list(dsl::p<declarator>, dsl::sep(dsl::comma));
-    static constexpr auto value = lexy::as_list<std::vector<clauf::declarator*>>;
+    static constexpr auto value = lexy::as_list<clauf::declarator_list>;
 };
 
 struct declaration
 {
     static constexpr auto rule = dsl::p<type_specifier> >> dsl::p<declarator_list> + dsl::semicolon;
 
-    [[maybe_unused]] static constexpr auto value = callback<std::vector<clauf::decl*>>(
-        [](const compiler_state& state, clauf::type*, std::vector<clauf::declarator*>&& decls) {
-            std::vector<clauf::decl*> result;
+    static constexpr auto value = callback<clauf::decl_list>(
+        [](const compiler_state& state, clauf::type*, clauf::declarator_list decls) {
+            clauf::decl_list result;
             for (auto decl : decls)
             {
                 dryad::visit_node(
@@ -473,13 +464,11 @@ struct translation_unit
 
     static constexpr auto rule = dsl::terminator(dsl::eof).list(dsl::p<function_definition>);
     static constexpr auto value
-        = lexy::as_list<std::vector<clauf::decl*>> >> callback<void>(
-              [](const compiler_state& state, const std::vector<clauf::decl*>& decls) {
-                  auto tu = state.ast.create<clauf::translation_unit>();
-                  for (auto d : decls)
-                      tu->add_declaration(d);
-                  state.ast.tree.set_root(tu);
-              });
+        = lexy::as_list<clauf::decl_list> >> callback<void>([](const compiler_state& state,
+                                                               clauf::decl_list      decls) {
+              auto tu = state.ast.create<clauf::translation_unit>(decls);
+              state.ast.tree.set_root(tu);
+          });
 };
 } // namespace clauf::grammar
 

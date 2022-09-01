@@ -5,11 +5,6 @@
 
 #include <cstdio>
 
-void clauf::decl_stmt::add_declaration(decl* d)
-{
-    insert_child_after(nullptr, d);
-}
-
 namespace
 {
 const char* to_string(clauf::node_kind kind)
