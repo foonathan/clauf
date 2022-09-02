@@ -3,8 +3,7 @@
 
 #include <clauf/codegen.hpp>
 
-#include <clauf/ast.hpp>
-
+#include <cassert>
 #include <dryad/node_map.hpp>
 #include <lauf/asm/builder.h>
 #include <lauf/asm/type.h>
@@ -14,6 +13,8 @@
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/value.h>
+
+#include <clauf/ast.hpp>
 
 //=== codegen ===//
 namespace
