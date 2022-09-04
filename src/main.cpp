@@ -36,7 +36,7 @@ int main(const options& opts)
         return 1;
     }
 
-    auto ast = compile(file.buffer());
+    auto ast = compile(clauf::file{file.buffer(), opts.input.c_str()});
     if (!ast)
         return 1;
 

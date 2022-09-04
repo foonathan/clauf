@@ -521,6 +521,11 @@ struct ast
         locations.insert(node, loc);
         return node;
     }
+
+    location location_of(const node* n) const
+    {
+        return *locations.lookup(n);
+    }
 };
 
 void dump_ast(const ast& ast);

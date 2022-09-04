@@ -7,10 +7,10 @@
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
 #include <lexy/dsl.hpp>
-#include <lexy_ext/report_error.hpp>
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
+#include <clauf/diagnostic.hpp>
 
 //=== declarator tree ===//
 namespace clauf
@@ -26,8 +26,8 @@ using declarator_list = dryad::unlinked_node_list<declarator>;
 
 struct name
 {
-    clauf::location   loc;
-    clauf::ast_symbol symbol;
+    location   loc;
+    ast_symbol symbol;
 };
 
 struct name_declarator : dryad::basic_node<declarator_kind::name>
@@ -41,7 +41,10 @@ struct name_declarator : dryad::basic_node<declarator_kind::name>
 struct function_declarator
 : dryad::basic_node<declarator_kind::function, dryad::container_node<declarator>>
 {
-    explicit function_declarator(dryad::node_ctor ctor, declarator* child) : node_base(ctor)
+    location loc;
+
+    explicit function_declarator(dryad::node_ctor ctor, location loc, declarator* child)
+    : node_base(ctor), loc(loc)
     {
         insert_child_after(nullptr, child);
     }
@@ -54,13 +57,12 @@ namespace
 {
 struct compiler_state
 {
-    lexy_ext::diagnostic_writer<clauf::buffer>           diag;
+    clauf::diagnostic_logger                             logger;
     clauf::ast                                           ast;
     dryad::tree<clauf::declarator_kind>                  decl_tree;
     dryad::symbol_table<clauf::ast_symbol, clauf::decl*> local_symbols;
-    bool                                                 errored = false;
 
-    compiler_state(const clauf::buffer& input) : diag(input, {lexy::visualize_fancy}) {}
+    compiler_state(const clauf::file& input) : logger(input) {}
 };
 
 template <typename ReturnType, typename... Callback>
@@ -155,14 +157,10 @@ struct identifier_expr
               auto decl = state.local_symbols.lookup(name.symbol);
               if (decl == nullptr)
               {
-                  auto out = lexy::cfile_output_iterator{stderr};
-                  state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
-                                           [&](auto, lexy::visualization_options) {
-                                               auto str = name.symbol.c_str(state.ast.symbols);
-                                               std::fprintf(stderr, "unknown identifier '%s'", str);
-                                               return out;
-                                           });
-                  state.errored = true;
+                  auto str = name.symbol.c_str(state.ast.symbols);
+                  state.logger.log(diagnostic_kind::error, "unknown identifier '%s'", str)
+                      .annotation(annotation_kind::primary, name.loc, "used here")
+                      .finish();
               }
 
               // TODO: don't hardcode type, copy type of declaration instead
@@ -345,16 +343,14 @@ struct decl_stmt
                 auto shadowed = state.local_symbols.insert_or_shadow(decl->name(), decl);
                 if (shadowed != nullptr)
                 {
-                    auto out = lexy::cfile_output_iterator{stderr};
-                    state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
-                                             [&](auto, lexy::visualization_options) {
-                                                 auto name = decl->name().c_str(state.ast.symbols);
-                                                 std::fprintf(stderr,
-                                                              "duplicate local declaration '%s'",
-                                                              name);
-                                                 return out;
-                                             });
-                    state.errored = true;
+                    auto name = decl->name().c_str(state.ast.symbols);
+                    state.logger
+                        .log(diagnostic_kind::error, "duplicate local declaration '%s'", name)
+                        .annotation(annotation_kind::secondary, state.ast.location_of(shadowed),
+                                    "first declaration")
+                        .annotation(annotation_kind::primary, state.ast.location_of(decl),
+                                    "second declaration")
+                        .finish();
                 }
             }
             return result;
@@ -398,8 +394,9 @@ struct declarator : lexy::expression_production
 
     struct function_declarator : dsl::postfix_op
     {
-        static constexpr auto op = dsl::op<function_declarator>(LEXY_LIT("(") >> LEXY_LIT(")"));
-        using operand            = dsl::atom;
+        static constexpr auto op
+            = dsl::op<function_declarator>(LEXY_LIT("(") >> dsl::position + LEXY_LIT(")"));
+        using operand = dsl::atom;
     };
 
     using operation = function_declarator;
@@ -409,8 +406,9 @@ struct declarator : lexy::expression_production
         [](compiler_state& state, clauf::name name) {
             return state.decl_tree.create<clauf::name_declarator>(name);
         },
-        [](compiler_state& state, clauf::declarator* child, function_declarator) {
-            return state.decl_tree.create<clauf::function_declarator>(child);
+        [](compiler_state& state, clauf::declarator* child, function_declarator,
+           clauf::location loc) {
+            return state.decl_tree.create<clauf::function_declarator>(loc, child);
         });
 };
 
@@ -439,14 +437,17 @@ struct declaration
                                                                           name->name.symbol, type);
                         result.push_back(var);
                     },
-                    [](clauf::function_declarator* fn) {
+                    [&](clauf::function_declarator* fn) {
                         if (auto name = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
                         {
                             CLAUF_TODO("create function declaration");
                         }
                         else
                         {
-                            CLAUF_TODO("generate error: function cannot return function");
+                            state.logger
+                                .log(diagnostic_kind::error, "function cannot return function type")
+                                .annotation(annotation_kind::primary, fn->loc, "declared here")
+                                .finish();
                         }
                     });
             }
@@ -500,12 +501,12 @@ struct translation_unit
 };
 } // namespace clauf::grammar
 
-std::optional<clauf::ast> clauf::compile(const buffer& input)
+std::optional<clauf::ast> clauf::compile(const file& input)
 {
     compiler_state state(input);
-    auto           result
-        = lexy::parse<clauf::grammar::translation_unit>(input, state, lexy_ext::report_error);
-    if (!result || state.errored)
+    auto           result = lexy::parse<clauf::grammar::translation_unit>(input.buffer, state,
+                                                                state.logger.error_callback());
+    if (!result || !state.logger)
         return std::nullopt;
 
     state.ast.tree.set_root(result.value());

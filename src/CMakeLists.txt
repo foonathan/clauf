@@ -7,6 +7,7 @@ set(source_files
         ${include_dir}/ast.hpp
         ${include_dir}/codegen.hpp
         ${include_dir}/compiler.hpp
+        ${include_dir}/diagnostic.hpp
 
         ast.cpp
         codegen.cpp
