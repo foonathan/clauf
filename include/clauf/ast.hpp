@@ -6,6 +6,7 @@
 
 #include <dryad/abstract_node.hpp>
 #include <dryad/node.hpp>
+#include <dryad/node_map.hpp>
 #include <dryad/symbol.hpp>
 #include <dryad/tree.hpp>
 
@@ -481,11 +482,28 @@ public:
     }
 };
 
+/// The location of an AST node in the input.
+struct location
+{
+    const char* begin;
+    const char* end;
+
+    location() : begin(nullptr), end(nullptr) {}
+    location(const char* pos) : begin(pos), end(pos) {}
+    location(const char* begin, const char* end) : begin(begin), end(end) {}
+
+    bool is_synthesized() const
+    {
+        return begin != nullptr && end != nullptr;
+    }
+};
+
 /// The entire AST of a source file.
 struct ast
 {
     dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
     dryad::tree<node_kind>                                     tree;
+    dryad::node_map<node, location>                            locations;
 
     translation_unit* root()
     {
@@ -497,9 +515,11 @@ struct ast
     }
 
     template <typename T, typename... Args>
-    T* create(Args&&... args)
+    T* create(location loc, Args&&... args)
     {
-        return tree.template create<T>(DRYAD_FWD(args)...);
+        auto node = tree.template create<T>(DRYAD_FWD(args)...);
+        locations.insert(node, loc);
+        return node;
     }
 };
 

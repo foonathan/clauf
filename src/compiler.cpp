@@ -24,11 +24,17 @@ enum class declarator_kind
 using declarator      = dryad::node<declarator_kind>;
 using declarator_list = dryad::unlinked_node_list<declarator>;
 
+struct name
+{
+    clauf::location   loc;
+    clauf::ast_symbol symbol;
+};
+
 struct name_declarator : dryad::basic_node<declarator_kind::name>
 {
-    ast_symbol name;
+    clauf::name name;
 
-    explicit name_declarator(dryad::node_ctor ctor, ast_symbol name) : node_base(ctor), name(name)
+    explicit name_declarator(dryad::node_ctor ctor, clauf::name name) : node_base(ctor), name(name)
     {}
 };
 
@@ -64,13 +70,15 @@ constexpr auto callback(Callback... cb)
 }
 template <typename T>
 constexpr auto construct = callback<T*>(
-    [](compiler_state& state, auto&& arg) {
+    [](compiler_state& state, clauf::location loc, auto&& arg) {
         if constexpr (std::is_same_v<std::decay_t<decltype(arg)>, lexy::nullopt>)
-            return state.ast.create<T>();
+            return state.ast.create<T>(loc);
         else
-            return state.ast.create<T>(DRYAD_FWD(arg));
+            return state.ast.create<T>(loc, DRYAD_FWD(arg));
     },
-    [](compiler_state& state, auto&&... args) { return state.ast.create<T>(DRYAD_FWD(args)...); });
+    [](compiler_state& state, clauf::location loc, auto&&... args) {
+        return state.ast.create<T>(loc, DRYAD_FWD(args)...);
+    });
 } // namespace
 
 namespace clauf::grammar
@@ -89,12 +97,12 @@ constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builti
 
 struct name
 {
-    static constexpr auto rule = identifier.reserve(dsl::literal_set(kw_builtin_types),
-                                                    dsl::literal_set(kw_builtin_stmts));
-    static constexpr auto value
-        = callback<clauf::ast_symbol>([](compiler_state& state, auto lexeme) {
-              return state.ast.symbols.intern(lexeme.data(), lexeme.size());
-          });
+    static constexpr auto rule  = identifier.reserve(dsl::literal_set(kw_builtin_types),
+                                                     dsl::literal_set(kw_builtin_stmts));
+    static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
+        auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
+        return clauf::name{{lexeme.begin(), lexeme.end()}, symbol};
+    });
 };
 
 } // namespace clauf::grammar
@@ -104,7 +112,7 @@ namespace clauf::grammar
 {
 struct builtin_type
 {
-    static constexpr auto rule  = dsl::symbol<kw_builtin_types>;
+    static constexpr auto rule  = dsl::position(dsl::symbol<kw_builtin_types>);
     static constexpr auto value = construct<clauf::builtin_type>;
 };
 
@@ -126,15 +134,16 @@ struct integer_constant_expr
         auto hex_digits     = (LEXY_LIT("0x") | LEXY_LIT("0X")) >> integer<dsl::hex>;
         auto binary_digits  = (LEXY_LIT("0b") | LEXY_LIT("0B")) >> integer<dsl::binary>;
 
-        return dsl::peek(dsl::lit_c<'0'>) >> (hex_digits | binary_digits | octal_digits)
-               | dsl::else_ >> decimal_digits;
+        return dsl::peek(dsl::lit_c<'0'>)
+                   >> dsl::position + (hex_digits | binary_digits | octal_digits)
+               | dsl::else_ >> dsl::position(decimal_digits);
     }();
 
-    static constexpr auto value
-        = callback<clauf::integer_constant_expr*>([](compiler_state& state, std::uint64_t value) {
-              auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-              return state.ast.create<clauf::integer_constant_expr>(type, value);
-          });
+    static constexpr auto value = callback<clauf::integer_constant_expr*>(
+        [](compiler_state& state, clauf::location loc, std::uint64_t value) {
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::integer_constant_expr>(loc, type, value);
+        });
 };
 
 struct identifier_expr
@@ -142,14 +151,14 @@ struct identifier_expr
     static constexpr auto rule = dsl::p<name>;
 
     static constexpr auto value
-        = callback<clauf::identifier_expr*>([](compiler_state& state, ast_symbol name) {
-              auto decl = state.local_symbols.lookup(name);
+        = callback<clauf::identifier_expr*>([](compiler_state& state, clauf::name name) {
+              auto decl = state.local_symbols.lookup(name.symbol);
               if (decl == nullptr)
               {
                   auto out = lexy::cfile_output_iterator{stderr};
                   state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
                                            [&](auto, lexy::visualization_options) {
-                                               auto str = name.c_str(state.ast.symbols);
+                                               auto str = name.symbol.c_str(state.ast.symbols);
                                                std::fprintf(stderr, "unknown identifier '%s'", str);
                                                return out;
                                            });
@@ -157,10 +166,35 @@ struct identifier_expr
               }
 
               // TODO: don't hardcode type, copy type of declaration instead
-              auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-              return state.ast.create<clauf::identifier_expr>(type, decl);
+              auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+              return state.ast.create<clauf::identifier_expr>(name.loc, type, decl);
           });
 };
+
+template <typename Enum>
+struct op_tag
+{
+    clauf::location loc;
+    Enum            op;
+
+    op_tag(clauf::location loc, Enum op) : loc(loc), op(op) {}
+
+    operator Enum()
+    {
+        return op;
+    }
+};
+template <auto Enum>
+struct op_tag_for : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>
+{
+    op_tag_for(const char* pos) : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>(pos, Enum) {}
+};
+
+template <auto Enum, typename Rule>
+constexpr auto op_(Rule rule)
+{
+    return dsl::op<op_tag_for<Enum>>(rule);
+}
 
 struct expr : lexy::expression_production
 {
@@ -170,95 +204,94 @@ struct expr : lexy::expression_production
 
     struct unary : dsl::prefix_op
     {
-        static constexpr auto op = dsl::op<clauf::unary_expr::plus>(LEXY_LIT("+"))
-                                   / dsl::op<clauf::unary_expr::neg>(LEXY_LIT("-"))
-                                   / dsl::op<clauf::unary_expr::bnot>(LEXY_LIT("~"))
-                                   / dsl::op<clauf::unary_expr::lnot>(LEXY_LIT("!"));
+        static constexpr auto op = op_<clauf::unary_expr::plus>(LEXY_LIT("+"))
+                                   / op_<clauf::unary_expr::neg>(LEXY_LIT("-"))
+                                   / op_<clauf::unary_expr::bnot>(LEXY_LIT("~"))
+                                   / op_<clauf::unary_expr::lnot>(LEXY_LIT("!"));
         using operand = dsl::atom;
     };
 
     struct multiplicative : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::mul>(LEXY_LIT("*"))
-                                   / dsl::op<clauf::binary_expr::div>(LEXY_LIT("/"))
-                                   / dsl::op<clauf::binary_expr::rem>(LEXY_LIT("%"));
+        static constexpr auto op = op_<clauf::binary_expr::mul>(LEXY_LIT("*"))
+                                   / op_<clauf::binary_expr::div>(LEXY_LIT("/"))
+                                   / op_<clauf::binary_expr::rem>(LEXY_LIT("%"));
         using operand = unary;
     };
 
     struct additive : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::add>(LEXY_LIT("+"))
-                                   / dsl::op<clauf::binary_expr::sub>(LEXY_LIT("-"));
+        static constexpr auto op = op_<clauf::binary_expr::add>(LEXY_LIT("+"))
+                                   / op_<clauf::binary_expr::sub>(LEXY_LIT("-"));
         using operand = multiplicative;
     };
 
     struct shift : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::shl>(LEXY_LIT("<<"))
-                                   / dsl::op<clauf::binary_expr::shr>(LEXY_LIT(">>"));
+        static constexpr auto op = op_<clauf::binary_expr::shl>(LEXY_LIT("<<"))
+                                   / op_<clauf::binary_expr::shr>(LEXY_LIT(">>"));
         using operand = additive;
     };
 
     struct relational : dsl::infix_op_left
     {
         static constexpr auto op
-            = dsl::op<clauf::binary_expr::lt>(dsl::not_followed_by(LEXY_LIT("<"), LEXY_LIT("<")))
-              / dsl::op<clauf::binary_expr::le>(LEXY_LIT("<="))
-              / dsl::op<clauf::binary_expr::gt>(dsl::not_followed_by(LEXY_LIT(">"), LEXY_LIT(">")))
-              / dsl::op<clauf::binary_expr::ge>(LEXY_LIT(">="));
+            = op_<clauf::binary_expr::lt>(dsl::not_followed_by(LEXY_LIT("<"), LEXY_LIT("<")))
+              / op_<clauf::binary_expr::le>(LEXY_LIT("<="))
+              / op_<clauf::binary_expr::gt>(dsl::not_followed_by(LEXY_LIT(">"), LEXY_LIT(">")))
+              / op_<clauf::binary_expr::ge>(LEXY_LIT(">="));
         using operand = shift;
     };
 
     struct equality : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::eq>(LEXY_LIT("=="))
-                                   / dsl::op<clauf::binary_expr::ne>(LEXY_LIT("!="));
+        static constexpr auto op = op_<clauf::binary_expr::eq>(LEXY_LIT("=="))
+                                   / op_<clauf::binary_expr::ne>(LEXY_LIT("!="));
         using operand = relational;
     };
 
     struct band : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::band>(LEXY_LIT("&"));
+        static constexpr auto op = op_<clauf::binary_expr::band>(LEXY_LIT("&"));
         using operand            = equality;
     };
     struct bxor : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::bxor>(LEXY_LIT("^"));
+        static constexpr auto op = op_<clauf::binary_expr::bxor>(LEXY_LIT("^"));
         using operand            = band;
     };
     struct bor : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::binary_expr::bor>(LEXY_LIT("|"));
+        static constexpr auto op = op_<clauf::binary_expr::bor>(LEXY_LIT("|"));
         using operand            = bxor;
     };
 
     struct land : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::sequenced_binary_expr::land>(LEXY_LIT("&&"));
+        static constexpr auto op = op_<clauf::sequenced_binary_expr::land>(LEXY_LIT("&&"));
         using operand            = bor;
     };
     struct lor : dsl::infix_op_left
     {
-        static constexpr auto op = dsl::op<clauf::sequenced_binary_expr::lor>(LEXY_LIT("||"));
+        static constexpr auto op = op_<clauf::sequenced_binary_expr::lor>(LEXY_LIT("||"));
         using operand            = land;
     };
 
     struct conditional : dsl::infix_op_right
     {
-        static constexpr auto op
-            = dsl::op<void>(LEXY_LIT("?") >> dsl::recurse<expr> + LEXY_LIT(":"));
-        using operand = lor;
+        static constexpr auto op = op_<0>(LEXY_LIT("?") >> dsl::recurse<expr> + LEXY_LIT(":"));
+        using operand            = lor;
     };
 
     struct assignment : dsl::infix_op_right
     {
-        static constexpr auto op = dsl::op<clauf::assignment_expr::none>(LEXY_LIT("="));
+        static constexpr auto op = op_<clauf::assignment_expr::none>(LEXY_LIT("="));
         using operand            = conditional;
     };
 
     struct comma : dsl::infix_op_right
     {
-        static constexpr auto op = dsl::op<clauf::sequenced_binary_expr::comma>(LEXY_LIT(","));
+        static constexpr auto op = op_<clauf::sequenced_binary_expr::comma>(LEXY_LIT(","));
         using operand            = assignment;
     };
 
@@ -266,30 +299,31 @@ struct expr : lexy::expression_production
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
-        [](compiler_state& state, clauf::unary_expr::op_t op, clauf::expr* child) {
-            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::unary_expr>(type, op, child);
+        [](compiler_state& state, op_tag<clauf::unary_expr::op_t> op, clauf::expr* child) {
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
         },
-        [](compiler_state& state, clauf::expr* left, clauf::binary_expr::op_t op,
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::binary_expr::op_t> op,
            clauf::expr* right) {
-            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::binary_expr>(type, op, left, right);
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::binary_expr>(op.loc, type, op, left, right);
         },
-        [](compiler_state& state, clauf::expr* left, clauf::sequenced_binary_expr::op_t op,
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_binary_expr::op_t> op,
            clauf::expr* right) {
-            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::sequenced_binary_expr>(type, op, left, right);
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::sequenced_binary_expr>(op.loc, type, op, left, right);
         },
-        [](compiler_state& state, clauf::expr* condition, clauf::expr* if_true,
+        [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
            clauf::expr* if_false) {
-            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::conditional_expr>(type, condition, if_true, if_false);
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::conditional_expr>(op.loc, type, condition, if_true,
+                                                             if_false);
         },
-        [](compiler_state& state, clauf::expr* left, clauf::assignment_expr::op_t op,
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_expr::op_t> op,
            clauf::expr* right) {
             // TODO: assert that left is an lvalue
-            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::assignment_expr>(type, op, left, right);
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::assignment_expr>(op.loc, type, op, left, right);
         });
 };
 } // namespace clauf::grammar
@@ -302,45 +336,47 @@ struct declaration;
 
 struct decl_stmt
 {
-    static constexpr auto rule  = dsl::recurse_branch<declaration>;
-    static constexpr auto value = callback<clauf::decl_stmt*>([](compiler_state& state,
-                                                                 decl_list       decls) {
-        auto result = state.ast.create<clauf::decl_stmt>(decls);
-        for (auto decl : result->declarations())
-        {
-            auto shadowed = state.local_symbols.insert_or_shadow(decl->name(), decl);
-            if (shadowed != nullptr)
+    static constexpr auto rule  = dsl::position(dsl::recurse_branch<declaration>);
+    static constexpr auto value = callback<clauf::decl_stmt*>(
+        [](compiler_state& state, clauf::location loc, decl_list decls) {
+            auto result = state.ast.create<clauf::decl_stmt>(loc, decls);
+            for (auto decl : result->declarations())
             {
-                auto out = lexy::cfile_output_iterator{stderr};
-                state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
-                                         [&](auto, lexy::visualization_options) {
-                                             auto name = decl->name().c_str(state.ast.symbols);
-                                             std::fprintf(stderr,
-                                                          "duplicate local declaration '%s'", name);
-                                             return out;
-                                         });
-                state.errored = true;
+                auto shadowed = state.local_symbols.insert_or_shadow(decl->name(), decl);
+                if (shadowed != nullptr)
+                {
+                    auto out = lexy::cfile_output_iterator{stderr};
+                    state.diag.write_message(out, lexy_ext::diagnostic_kind::error,
+                                             [&](auto, lexy::visualization_options) {
+                                                 auto name = decl->name().c_str(state.ast.symbols);
+                                                 std::fprintf(stderr,
+                                                              "duplicate local declaration '%s'",
+                                                              name);
+                                                 return out;
+                                             });
+                    state.errored = true;
+                }
             }
-        }
-        return result;
-    });
+            return result;
+        });
 };
 
 struct expr_stmt
 {
-    static constexpr auto rule  = dsl::p<expr> + dsl::semicolon;
+    static constexpr auto rule  = dsl::position + dsl::p<expr> + dsl::semicolon;
     static constexpr auto value = construct<clauf::expr_stmt>;
 };
 
 struct builtin_stmt
 {
-    static constexpr auto rule  = dsl::symbol<kw_builtin_stmts> >> dsl::p<expr> + dsl::semicolon;
+    static constexpr auto rule
+        = dsl::position(dsl::symbol<kw_builtin_stmts>) >> dsl::p<expr> + dsl::semicolon;
     static constexpr auto value = construct<clauf::builtin_stmt>;
 };
 
 struct block_stmt
 {
-    static constexpr auto rule = dsl::curly_bracketed.opt_list(dsl::recurse<stmt>);
+    static constexpr auto rule = dsl::position(dsl::curly_bracketed.opt_list(dsl::recurse<stmt>));
 
     static constexpr auto value = lexy::as_list<stmt_list> >> construct<clauf::block_stmt>;
 };
@@ -370,7 +406,7 @@ struct declarator : lexy::expression_production
 
     static constexpr auto value = callback<clauf::declarator*>( //
         [](const compiler_state&, clauf::declarator* decl) { return decl; },
-        [](compiler_state& state, clauf::ast_symbol name) {
+        [](compiler_state& state, clauf::name name) {
             return state.decl_tree.create<clauf::name_declarator>(name);
         },
         [](compiler_state& state, clauf::declarator* child, function_declarator) {
@@ -388,32 +424,34 @@ struct declaration
 {
     static constexpr auto rule = dsl::p<type_specifier> >> dsl::p<declarator_list> + dsl::semicolon;
 
-    static constexpr auto value = callback<clauf::decl_list>([](compiler_state& state, clauf::type*,
-                                                                clauf::declarator_list decls) {
-        clauf::decl_list result;
-        for (auto decl : decls)
-        {
-            dryad::visit_node(
-                decl,
-                [&](clauf::name_declarator* name) {
-                    // TODO: we only have int as type, so just create a new int every time.
-                    auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-                    auto var  = state.ast.create<clauf::variable_decl>(name->name, type);
-                    result.push_back(var);
-                },
-                [](clauf::function_declarator* fn) {
-                    if (auto name = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
-                    {
-                        CLAUF_TODO("create function declaration");
-                    }
-                    else
-                    {
-                        CLAUF_TODO("generate error: function cannot return function");
-                    }
-                });
-        }
-        return result;
-    });
+    static constexpr auto value = callback<clauf::decl_list>(
+        [](compiler_state& state, clauf::type*, clauf::declarator_list decls) {
+            clauf::decl_list result;
+            for (auto decl : decls)
+            {
+                dryad::visit_node(
+                    decl,
+                    [&](clauf::name_declarator* name) {
+                        // TODO: we only have int as type, so just create a new int every time.
+                        auto type
+                            = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+                        auto var = state.ast.create<clauf::variable_decl>(name->name.loc,
+                                                                          name->name.symbol, type);
+                        result.push_back(var);
+                    },
+                    [](clauf::function_declarator* fn) {
+                        if (auto name = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
+                        {
+                            CLAUF_TODO("create function declaration");
+                        }
+                        else
+                        {
+                            CLAUF_TODO("generate error: function cannot return function");
+                        }
+                    });
+            }
+            return result;
+        });
 };
 
 struct function_definition
@@ -433,8 +471,10 @@ struct function_definition
               {
                   if (auto named = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
                   {
-                      auto fn_type = state.ast.create<clauf::function_type>(type);
-                      return state.ast.create<clauf::function_decl>(named->name, fn_type, body);
+                      auto fn_type = state.ast.create<clauf::function_type>({}, type);
+                      return state.ast.create<clauf::function_decl>(named->name.loc,
+                                                                    named->name.symbol, fn_type,
+                                                                    body);
                   }
               }
 
@@ -453,7 +493,8 @@ struct translation_unit
                                        | LEXY_LIT("//") >> dsl::until(dsl::newline)
                                        | LEXY_LIT("/*") >> dsl::until(LEXY_LIT("*/"));
 
-    static constexpr auto rule = dsl::terminator(dsl::eof).list(dsl::p<function_definition>);
+    static constexpr auto rule
+        = dsl::position + dsl::terminator(dsl::eof).list(dsl::p<function_definition>);
     static constexpr auto value
         = lexy::as_list<clauf::decl_list> >> construct<clauf::translation_unit>;
 };
