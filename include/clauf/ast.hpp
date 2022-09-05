@@ -27,13 +27,14 @@ enum class node_kind
     integer_constant_expr,
     identifier_expr,
     unary_expr,
-    binary_expr,
-    sequenced_binary_expr,
-    conditional_expr,
+    arithmetic_expr,
+    comparison_expr,
+    sequenced_expr,
     assignment_expr,
+    conditional_expr,
 
     first_expr = integer_constant_expr,
-    last_expr  = assignment_expr,
+    last_expr  = conditional_expr,
 
     //=== statements ===//
     decl_stmt,
@@ -160,25 +161,26 @@ private:
     clauf::decl* _decl;
 };
 
+enum class unary_op : std::uint16_t
+{
+    plus,
+    neg,
+    bnot, // ~
+    lnot, // !
+};
+
+/// A unary expression.
 class unary_expr : public dryad::basic_node<node_kind::unary_expr, expr>
 {
 public:
-    enum op_t : std::uint16_t
-    {
-        plus,
-        neg,
-        bnot, // ~
-        lnot, // !
-    };
-
-    explicit unary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* child)
+    explicit unary_expr(dryad::node_ctor ctor, clauf::type* type, unary_op op, clauf::expr* child)
     : node_base(ctor, type)
     {
         set_op_impl(op);
         insert_child_after(this->type(), child);
     }
 
-    op_t op() const
+    unary_op op() const
     {
         return op_impl();
     }
@@ -186,83 +188,81 @@ public:
     DRYAD_CHILD_NODE_GETTER(clauf::expr, child, type())
 
 private:
-    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
+    DRYAD_ATTRIBUTE_USER_DATA16(unary_op, op_impl);
 };
 
-class binary_expr : public dryad::basic_node<node_kind::binary_expr, expr>
+template <node_kind Kind, typename OpT>
+class binary_expr : public dryad::basic_node<Kind, expr>
 {
 public:
-    enum op_t : std::uint16_t
-    {
-        add,
-        sub,
-        mul,
-        div,
-        rem,
-
-        band,
-        bor,
-        bxor,
-        shl,
-        shr,
-
-        eq,
-        ne,
-        lt,
-        le,
-        gt,
-        ge,
-    };
-
-    explicit binary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* left,
+    explicit binary_expr(dryad::node_ctor ctor, clauf::type* type, OpT op, clauf::expr* left,
                          clauf::expr* right)
-    : node_base(ctor, type)
+    : dryad::basic_node<Kind, expr>(ctor, type)
     {
-        set_op_impl(op);
-        insert_children_after(this->type(), left, right);
+        this->user_data16() = std::uint16_t(op);
+        this->insert_children_after(this->type(), left, right);
     }
 
-    op_t op() const
+    OpT op() const
     {
-        return op_impl();
+        return OpT(this->user_data16());
     }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, left, type())
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, right, left())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, left, this->type())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, right, this->left())
 
 private:
-    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
+    using dryad::basic_node<Kind, expr>::user_data16;
 };
 
-class sequenced_binary_expr : public dryad::basic_node<node_kind::sequenced_binary_expr, expr>
+enum class arithmetic_op : std::uint16_t
 {
-public:
-    enum op_t : std::uint16_t
-    {
-        land,
-        lor,
-        comma,
-    };
+    add,
+    sub,
+    mul,
+    div,
+    rem,
 
-    explicit sequenced_binary_expr(dryad::node_ctor ctor, clauf::type* type, op_t op,
-                                   clauf::expr* left, clauf::expr* right)
-    : node_base(ctor, type)
-    {
-        set_op_impl(op);
-        insert_children_after(this->type(), left, right);
-    }
-
-    op_t op() const
-    {
-        return op_impl();
-    }
-
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, left, type())
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, right, left())
-
-private:
-    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
+    band,
+    bor,
+    bxor,
+    shl,
+    shr,
 };
+
+/// Binary expression with signature T x T -> T.
+using arithmetic_expr = binary_expr<node_kind::arithmetic_expr, arithmetic_op>;
+
+enum class comparison_op
+{
+    eq,
+    ne,
+    lt,
+    le,
+    gt,
+    ge,
+};
+
+/// Binary expression with signature T x T -> bool;
+using comparison_expr = binary_expr<node_kind::comparison_expr, comparison_op>;
+
+enum class sequenced_op
+{
+    land,
+    lor,
+    comma,
+};
+
+/// Binary expression whith special operator evaluation rules.
+using sequenced_expr = binary_expr<node_kind::sequenced_expr, sequenced_op>;
+
+enum class assignment_op : std::uint16_t
+{
+    none,
+};
+
+/// Assignment expression.
+using assignment_expr = binary_expr<node_kind::assignment_expr, assignment_op>;
 
 class conditional_expr : public dryad::basic_node<node_kind::conditional_expr, expr>
 {
@@ -277,34 +277,6 @@ public:
     DRYAD_CHILD_NODE_GETTER(clauf::expr, condition, type())
     DRYAD_CHILD_NODE_GETTER(clauf::expr, if_true, condition())
     DRYAD_CHILD_NODE_GETTER(clauf::expr, if_false, if_true())
-};
-
-class assignment_expr : public dryad::basic_node<node_kind::assignment_expr, expr>
-{
-public:
-    enum op_t : std::uint16_t
-    {
-        none,
-    };
-
-    explicit assignment_expr(dryad::node_ctor ctor, clauf::type* type, op_t op, clauf::expr* lvalue,
-                             clauf::expr* rvalue)
-    : node_base(ctor, type)
-    {
-        set_op_impl(op);
-        insert_children_after(this->type(), lvalue, rvalue);
-    }
-
-    op_t op() const
-    {
-        return op_impl();
-    }
-
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, lvalue, type())
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, rvalue, lvalue())
-
-private:
-    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
 };
 } // namespace clauf
 

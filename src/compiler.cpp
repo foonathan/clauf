@@ -202,76 +202,76 @@ struct expr : lexy::expression_production
 
     struct unary : dsl::prefix_op
     {
-        static constexpr auto op = op_<clauf::unary_expr::plus>(LEXY_LIT("+"))
-                                   / op_<clauf::unary_expr::neg>(LEXY_LIT("-"))
-                                   / op_<clauf::unary_expr::bnot>(LEXY_LIT("~"))
-                                   / op_<clauf::unary_expr::lnot>(LEXY_LIT("!"));
+        static constexpr auto op = op_<clauf::unary_op::plus>(LEXY_LIT("+"))
+                                   / op_<clauf::unary_op::neg>(LEXY_LIT("-"))
+                                   / op_<clauf::unary_op::bnot>(LEXY_LIT("~"))
+                                   / op_<clauf::unary_op::lnot>(LEXY_LIT("!"));
         using operand = dsl::atom;
     };
 
     struct multiplicative : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::binary_expr::mul>(LEXY_LIT("*"))
-                                   / op_<clauf::binary_expr::div>(LEXY_LIT("/"))
-                                   / op_<clauf::binary_expr::rem>(LEXY_LIT("%"));
+        static constexpr auto op = op_<clauf::arithmetic_op::mul>(LEXY_LIT("*"))
+                                   / op_<clauf::arithmetic_op::div>(LEXY_LIT("/"))
+                                   / op_<clauf::arithmetic_op::rem>(LEXY_LIT("%"));
         using operand = unary;
     };
 
     struct additive : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::binary_expr::add>(LEXY_LIT("+"))
-                                   / op_<clauf::binary_expr::sub>(LEXY_LIT("-"));
+        static constexpr auto op = op_<clauf::arithmetic_op::add>(LEXY_LIT("+"))
+                                   / op_<clauf::arithmetic_op::sub>(LEXY_LIT("-"));
         using operand = multiplicative;
     };
 
     struct shift : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::binary_expr::shl>(LEXY_LIT("<<"))
-                                   / op_<clauf::binary_expr::shr>(LEXY_LIT(">>"));
+        static constexpr auto op = op_<clauf::arithmetic_op::shl>(LEXY_LIT("<<"))
+                                   / op_<clauf::arithmetic_op::shr>(LEXY_LIT(">>"));
         using operand = additive;
     };
 
     struct relational : dsl::infix_op_left
     {
         static constexpr auto op
-            = op_<clauf::binary_expr::lt>(dsl::not_followed_by(LEXY_LIT("<"), LEXY_LIT("<")))
-              / op_<clauf::binary_expr::le>(LEXY_LIT("<="))
-              / op_<clauf::binary_expr::gt>(dsl::not_followed_by(LEXY_LIT(">"), LEXY_LIT(">")))
-              / op_<clauf::binary_expr::ge>(LEXY_LIT(">="));
+            = op_<clauf::comparison_op::lt>(dsl::not_followed_by(LEXY_LIT("<"), LEXY_LIT("<")))
+              / op_<clauf::comparison_op::le>(LEXY_LIT("<="))
+              / op_<clauf::comparison_op::gt>(dsl::not_followed_by(LEXY_LIT(">"), LEXY_LIT(">")))
+              / op_<clauf::comparison_op::ge>(LEXY_LIT(">="));
         using operand = shift;
     };
 
     struct equality : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::binary_expr::eq>(LEXY_LIT("=="))
-                                   / op_<clauf::binary_expr::ne>(LEXY_LIT("!="));
+        static constexpr auto op = op_<clauf::comparison_op::eq>(LEXY_LIT("=="))
+                                   / op_<clauf::comparison_op::ne>(LEXY_LIT("!="));
         using operand = relational;
     };
 
     struct band : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::binary_expr::band>(LEXY_LIT("&"));
+        static constexpr auto op = op_<clauf::arithmetic_op::band>(LEXY_LIT("&"));
         using operand            = equality;
     };
     struct bxor : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::binary_expr::bxor>(LEXY_LIT("^"));
+        static constexpr auto op = op_<clauf::arithmetic_op::bxor>(LEXY_LIT("^"));
         using operand            = band;
     };
     struct bor : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::binary_expr::bor>(LEXY_LIT("|"));
+        static constexpr auto op = op_<clauf::arithmetic_op::bor>(LEXY_LIT("|"));
         using operand            = bxor;
     };
 
     struct land : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::sequenced_binary_expr::land>(LEXY_LIT("&&"));
+        static constexpr auto op = op_<clauf::sequenced_op::land>(LEXY_LIT("&&"));
         using operand            = bor;
     };
     struct lor : dsl::infix_op_left
     {
-        static constexpr auto op = op_<clauf::sequenced_binary_expr::lor>(LEXY_LIT("||"));
+        static constexpr auto op = op_<clauf::sequenced_op::lor>(LEXY_LIT("||"));
         using operand            = land;
     };
 
@@ -283,13 +283,13 @@ struct expr : lexy::expression_production
 
     struct assignment : dsl::infix_op_right
     {
-        static constexpr auto op = op_<clauf::assignment_expr::none>(LEXY_LIT("="));
+        static constexpr auto op = op_<clauf::assignment_op::none>(LEXY_LIT("="));
         using operand            = conditional;
     };
 
     struct comma : dsl::infix_op_right
     {
-        static constexpr auto op = op_<clauf::sequenced_binary_expr::comma>(LEXY_LIT(","));
+        static constexpr auto op = op_<clauf::sequenced_op::comma>(LEXY_LIT(","));
         using operand            = assignment;
     };
 
@@ -297,31 +297,36 @@ struct expr : lexy::expression_production
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
-        [](compiler_state& state, op_tag<clauf::unary_expr::op_t> op, clauf::expr* child) {
+        [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
         },
-        [](compiler_state& state, clauf::expr* left, op_tag<clauf::binary_expr::op_t> op,
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
-            return state.ast.create<clauf::binary_expr>(op.loc, type, op, left, right);
+            return state.ast.create<clauf::arithmetic_expr>(op.loc, type, op, left, right);
         },
-        [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_binary_expr::op_t> op,
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
-            return state.ast.create<clauf::sequenced_binary_expr>(op.loc, type, op, left, right);
+            return state.ast.create<clauf::comparison_expr>(op.loc, type, op, left, right);
+        },
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
+           clauf::expr* right) {
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
+        },
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
+           clauf::expr* right) {
+            // TODO: assert that left is an lvalue
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::assignment_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
            clauf::expr* if_false) {
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
             return state.ast.create<clauf::conditional_expr>(op.loc, type, condition, if_true,
                                                              if_false);
-        },
-        [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_expr::op_t> op,
-           clauf::expr* right) {
-            // TODO: assert that left is an lvalue
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
-            return state.ast.create<clauf::assignment_expr>(op.loc, type, op, left, right);
         });
 };
 } // namespace clauf::grammar

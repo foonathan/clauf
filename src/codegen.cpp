@@ -105,91 +105,95 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
             // At this point, one value has been pushed onto the stack.
             switch (expr->op())
             {
-            case clauf::unary_expr::plus:
+            case clauf::unary_op::plus:
                 // Do nothing.
                 break;
-            case clauf::unary_expr::neg:
+            case clauf::unary_op::neg:
                 lauf_asm_inst_sint(b, -1);
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
                 break;
-            case clauf::unary_expr::bnot:
+            case clauf::unary_op::bnot:
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_not);
                 break;
-            case clauf::unary_expr::lnot:
+            case clauf::unary_op::lnot:
                 // If any bit is set, produce 0, otherwise, produce 1.
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_none_set);
                 break;
             }
         },
-        [&](dryad::traverse_event_exit, const clauf::binary_expr* expr) {
+        [&](dryad::traverse_event_exit, const clauf::arithmetic_expr* expr) {
             // At this point, two values have been pushed onto the stack.
             switch (expr->op())
             {
-            case clauf::binary_expr::add:
+            case clauf::arithmetic_op::add:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_sadd(LAUF_LIB_INT_OVERFLOW_PANIC));
                 break;
-            case clauf::binary_expr::sub:
+            case clauf::arithmetic_op::sub:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_ssub(LAUF_LIB_INT_OVERFLOW_PANIC));
                 break;
-            case clauf::binary_expr::mul:
+            case clauf::arithmetic_op::mul:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
                 break;
-            case clauf::binary_expr::div:
+            case clauf::arithmetic_op::div:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
                 break;
-            case clauf::binary_expr::rem:
+            case clauf::arithmetic_op::rem:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_srem);
                 break;
 
-            case clauf::binary_expr::band:
+            case clauf::arithmetic_op::band:
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_and);
                 break;
-            case clauf::binary_expr::bor:
+            case clauf::arithmetic_op::bor:
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_or);
                 break;
-            case clauf::binary_expr::bxor:
+            case clauf::arithmetic_op::bxor:
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_xor);
                 break;
-            case clauf::binary_expr::shl:
+            case clauf::arithmetic_op::shl:
                 // Overflow wraps around and is not undefined.
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_shl);
                 break;
-            case clauf::binary_expr::shr:
+            case clauf::arithmetic_op::shr:
                 // implementation-defined behavior: arithmetic right shift
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_sshr);
                 break;
-
-            case clauf::binary_expr::eq:
+            }
+        },
+        [&](dryad::traverse_event_exit, const clauf::comparison_expr* expr) {
+            // At this point, two values have been pushed onto the stack.
+            switch (expr->op())
+            {
+            case clauf::comparison_op::eq:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_EQ);
                 break;
-            case clauf::binary_expr::ne:
+            case clauf::comparison_op::ne:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_NE);
                 break;
-            case clauf::binary_expr::lt:
+            case clauf::comparison_op::lt:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_LT);
                 break;
-            case clauf::binary_expr::le:
+            case clauf::comparison_op::le:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_LE);
                 break;
-            case clauf::binary_expr::gt:
+            case clauf::comparison_op::gt:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_GT);
                 break;
-            case clauf::binary_expr::ge:
+            case clauf::comparison_op::ge:
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_GE);
                 break;
             }
         },
-        [&](dryad::child_visitor<clauf::node_kind> visitor,
-            const clauf::sequenced_binary_expr*    expr) {
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::sequenced_expr* expr) {
             switch (expr->op())
             {
-            case clauf::sequenced_binary_expr::land: {
+            case clauf::sequenced_op::land: {
                 auto cur_stack_size     = lauf_asm_build_get_vstack_size(b);
                 auto block_eval_right   = lauf_asm_declare_block(b, cur_stack_size);
                 auto block_shortcircuit = lauf_asm_declare_block(b, cur_stack_size);
@@ -213,7 +217,7 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 break;
             }
 
-            case clauf::sequenced_binary_expr::lor: {
+            case clauf::sequenced_op::lor: {
                 auto cur_stack_size     = lauf_asm_build_get_vstack_size(b);
                 auto block_eval_right   = lauf_asm_declare_block(b, cur_stack_size);
                 auto block_shortcircuit = lauf_asm_declare_block(b, cur_stack_size);
@@ -237,7 +241,7 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 break;
             }
 
-            case clauf::sequenced_binary_expr::comma:
+            case clauf::sequenced_op::comma:
                 visitor(expr->left());
                 lauf_asm_inst_pop(b, 0);
                 visitor(expr->right());
@@ -269,13 +273,13 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::assignment_expr* expr) {
             // Push the value we're assigning onto the stack.
-            visitor(expr->rvalue());
+            visitor(expr->right());
             // We duplicate it, because we also want to return the value.
             lauf_asm_inst_pick(b, 0);
 
             // Push the address of the lvalue onto the stack.
             // TODO: only identifier_expr is an lvalue at the moment
-            dryad::visit_node_all(expr->lvalue(), [&](const clauf::identifier_expr* id) {
+            dryad::visit_node_all(expr->left(), [&](const clauf::identifier_expr* id) {
                 auto var = local_vars.lookup(id->declaration());
                 assert(var != nullptr);
                 lauf_asm_inst_local_addr(b, *var);

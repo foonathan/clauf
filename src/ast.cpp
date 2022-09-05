@@ -21,14 +21,16 @@ const char* to_string(clauf::node_kind kind)
         return "identifier expr";
     case clauf::node_kind::unary_expr:
         return "unary expr";
-    case clauf::node_kind::binary_expr:
-        return "binary expr";
-    case clauf::node_kind::sequenced_binary_expr:
-        return "sequenced binary expr";
-    case clauf::node_kind::conditional_expr:
-        return "conditional expr";
+    case clauf::node_kind::arithmetic_expr:
+        return "arithmetic expr";
+    case clauf::node_kind::comparison_expr:
+        return "comparison expr";
+    case clauf::node_kind::sequenced_expr:
+        return "sequenced expr";
     case clauf::node_kind::assignment_expr:
         return "assignment expr";
+    case clauf::node_kind::conditional_expr:
+        return "conditional expr";
     case clauf::node_kind::decl_stmt:
         return "decl stmt";
     case clauf::node_kind::expr_stmt:
@@ -81,83 +83,88 @@ void clauf::dump_ast(const ast& ast)
             [&](const unary_expr* expr) {
                 switch (expr->op())
                 {
-                case unary_expr::plus:
+                case unary_op::plus:
                     std::printf("+");
                     break;
-                case unary_expr::neg:
+                case unary_op::neg:
                     std::printf("-");
                     break;
-                case unary_expr::bnot:
+                case unary_op::bnot:
                     std::printf("~");
                     break;
-                case unary_expr::lnot:
+                case unary_op::lnot:
                     std::printf("!");
                     break;
                 }
             },
-            [&](const binary_expr* expr) {
+            [&](const arithmetic_expr* expr) {
                 switch (expr->op())
                 {
-                case binary_expr::add:
+                case arithmetic_op::add:
                     std::printf("+");
                     break;
-                case binary_expr::sub:
+                case arithmetic_op::sub:
                     std::printf("-");
                     break;
-                case binary_expr::mul:
+                case arithmetic_op::mul:
                     std::printf("*");
                     break;
-                case binary_expr::div:
+                case arithmetic_op::div:
                     std::printf("/");
                     break;
-                case binary_expr::rem:
+                case arithmetic_op::rem:
                     std::printf("%%");
                     break;
-                case binary_expr::band:
+                case arithmetic_op::band:
                     std::printf("&");
                     break;
-                case binary_expr::bor:
+                case arithmetic_op::bor:
                     std::printf("|");
                     break;
-                case binary_expr::bxor:
+                case arithmetic_op::bxor:
                     std::printf("^");
                     break;
-                case binary_expr::shl:
+                case arithmetic_op::shl:
                     std::printf("<<");
                     break;
-                case binary_expr::shr:
+                case arithmetic_op::shr:
                     std::printf(">>");
                     break;
-                case binary_expr::eq:
+                }
+            },
+            [&](const comparison_expr* expr) {
+                switch (expr->op())
+                {
+                case comparison_op::eq:
                     std::printf("==");
                     break;
-                case binary_expr::ne:
+                case comparison_op::ne:
                     std::printf("!=");
                     break;
-                case binary_expr::lt:
+                case comparison_op::lt:
                     std::printf("<");
                     break;
-                case binary_expr::le:
+                case comparison_op::le:
                     std::printf("<=");
                     break;
-                case binary_expr::gt:
+                case comparison_op::gt:
                     std::printf(">");
                     break;
-                case binary_expr::ge:
+                case comparison_op::ge:
                     std::printf(">=");
                     break;
                 }
             },
-            [&](const sequenced_binary_expr* expr) {
+            [&](const sequenced_expr* expr) {
                 switch (expr->op())
                 {
-                case sequenced_binary_expr::land:
+                case sequenced_op::land:
                     std::printf("&&");
                     break;
-                case sequenced_binary_expr::lor:
+                case sequenced_op::lor:
                     std::printf("||");
                     break;
-                case sequenced_binary_expr::comma:
+                case sequenced_op::comma:
                     std::printf(",");
                     break;
                 }
@@ -165,7 +172,7 @@ void clauf::dump_ast(const ast& ast)
             [&](const assignment_expr* expr) {
                 switch (expr->op())
                 {
-                case assignment_expr::none:
+                case assignment_op::none:
                     std::printf("=");
                     break;
                 }
