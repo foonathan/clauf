@@ -23,9 +23,10 @@ namespace
 {
 struct context
 {
-    const clauf::ast* ast;
-    lauf_asm_module*  mod;
-    lauf_asm_builder* builder;
+    const clauf::ast*                                             ast;
+    lauf_asm_module*                                              mod;
+    lauf_asm_builder*                                             builder;
+    dryad::node_map<const clauf::variable_decl, lauf_asm_global*> globals;
 
     context(const clauf::ast& ast)
     : ast(&ast), mod(lauf_asm_create_module("main module")),
@@ -157,12 +158,25 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
             lauf_asm_inst_uint(b, expr->value());
         },
         [&](const clauf::identifier_expr* expr) {
-            auto var = local_vars.lookup(expr->declaration());
-            assert(var != nullptr);
+            if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
+            {
+                if (auto local_var = local_vars.lookup(var_decl))
+                {
+                    // Push the value of local_var onto the stack.
+                    lauf_asm_inst_local_addr(b, *local_var);
+                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                    return;
+                }
+                else if (auto global_var = ctx.globals.lookup(var_decl))
+                {
+                    // Push the value of global_var onto the stack.
+                    lauf_asm_inst_global_addr(b, *global_var);
+                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                    return;
+                }
+            }
 
-            // Push the value of var onto the stack.
-            lauf_asm_inst_local_addr(b, *var);
-            lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+            CLAUF_UNREACHABLE("currently nothing else supported");
         },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
             // At this point, one value has been pushed onto the stack.
@@ -296,10 +310,24 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
 
             // Push the address of the lvalue onto the stack.
             // TODO: only identifier_expr is an lvalue at the moment
-            dryad::visit_node_all(expr->left(), [&](const clauf::identifier_expr* id) {
-                auto var = local_vars.lookup(id->declaration());
-                assert(var != nullptr);
-                lauf_asm_inst_local_addr(b, *var);
+            dryad::visit_node_all(expr->left(), [&](const clauf::identifier_expr* expr) {
+                if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
+                {
+                    if (auto local_var = local_vars.lookup(var_decl))
+                    {
+                        // Push the value of local_var onto the stack.
+                        lauf_asm_inst_local_addr(b, *local_var);
+                        return;
+                    }
+                    else if (auto global_var = ctx.globals.lookup(var_decl))
+                    {
+                        // Push the value of global_var onto the stack.
+                        lauf_asm_inst_global_addr(b, *global_var);
+                        return;
+                    }
+                }
+
+                CLAUF_UNREACHABLE("we don't support anything else yet");
             });
             // Store the value into address.
             lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
@@ -343,7 +371,15 @@ lauf_asm_module* clauf::codegen(const ast& ast)
     context ctx(ast);
 
     for (auto decl : ast.root()->declarations())
-        dryad::visit_node(decl, [&](const function_decl* decl) { codegen_function(ctx, decl); });
+        dryad::visit_node(
+            decl, [&](const function_decl* decl) { codegen_function(ctx, decl); },
+            [&](const variable_decl* decl) {
+                // TODO: types other than int
+                auto global
+                    = lauf_asm_add_global_zero_data(ctx.mod,
+                                                    LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
+                ctx.globals.insert(decl, global);
+            });
 
     return ctx.mod;
 }

@@ -7,6 +7,7 @@
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
 #include <lexy/dsl.hpp>
+#include <vector>
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
@@ -174,6 +175,9 @@ struct identifier_expr
     static constexpr auto value
         = callback<clauf::identifier_expr*>([](compiler_state& state, clauf::name name) {
               auto decl = state.local_symbols.lookup(name.symbol);
+              if (decl == nullptr)
+                  decl = state.global_symbols.lookup(name.symbol);
+
               if (decl == nullptr)
               {
                   auto str = name.symbol.c_str(state.ast.symbols);
@@ -475,35 +479,60 @@ struct declaration
         });
 };
 
-struct function_definition
+struct global_declaration : lexy::scan_production<clauf::decl_list>
 {
-    static void function_start(compiler_state& state)
+    template <typename Context, typename Reader>
+    static scan_result scan(lexy::rule_scanner<Context, Reader>& scanner, compiler_state& state)
     {
-        state.local_symbols = {};
+        auto type = scanner.parse(grammar::type_specifier{});
+        if (!type)
+            return lexy::scan_failed;
+
+        auto decl = scanner.parse(grammar::declarator{});
+        if (!decl)
+            return lexy::scan_failed;
+
+        // At this point, look whether we have a {.
+        if (scanner.peek(dsl::lit_c<'{'>))
+        {
+            state.local_symbols = {};
+
+            auto body = scanner.parse(grammar::block_stmt{});
+
+            if (auto fn = dryad::node_try_cast<clauf::function_declarator>(decl.value()))
+            {
+                if (auto named = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
+                {
+                    auto fn_type = state.ast.create<clauf::function_type>({}, type.value());
+                    auto fn_decl = state.ast.create<clauf::function_decl>(named->name.loc,
+                                                                          named->name.symbol,
+                                                                          fn_type, body.value());
+                    insert_new_decl(state, state.global_symbols, fn_decl, "global");
+
+                    clauf::decl_list list;
+                    list.push_back(fn_decl);
+                    return list;
+                }
+            }
+
+            CLAUF_TODO("generator error: not a function definition");
+            return clauf::decl_list();
+        }
+        else
+        {
+            // We're having a declaration that isn't a function definition.
+            scanner.parse(dsl::semicolon);
+            if (!scanner)
+                return lexy::scan_failed;
+
+            clauf::declarator_list list;
+            list.push_front(decl.value());
+            auto decls = grammar::declaration::value[state](type.value(), list);
+            for (auto decl : decls)
+                insert_new_decl(state, state.global_symbols, decl, "global");
+            return decls;
+        }
     }
-
-    static constexpr auto rule = dsl::p<type_specifier> + dsl::p<declarator> //
-                                 + dsl::effect<function_start> + dsl::p<block_stmt>;
-
-    static constexpr auto value
-        = callback<clauf::function_decl*>([](compiler_state& state, clauf::type* type,
-                                             clauf::declarator* decl, clauf::block_stmt* body) {
-              if (auto fn = dryad::node_try_cast<clauf::function_declarator>(decl))
-              {
-                  if (auto named = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
-                  {
-                      auto fn_type = state.ast.create<clauf::function_type>({}, type);
-                      auto fn_decl = state.ast.create<clauf::function_decl>(named->name.loc,
-                                                                            named->name.symbol,
-                                                                            fn_type, body);
-                      insert_new_decl(state, state.global_symbols, fn_decl, "global");
-                      return fn_decl;
-                  }
-              }
-
-              CLAUF_TODO("generator error: not a function definition");
-              return static_cast<clauf::function_decl*>(nullptr);
-          });
 };
 } // namespace clauf::grammar
 
@@ -517,9 +546,18 @@ struct translation_unit
                                        | LEXY_LIT("/*") >> dsl::until(LEXY_LIT("*/"));
 
     static constexpr auto rule
-        = dsl::position + dsl::terminator(dsl::eof).list(dsl::p<function_definition>);
+        = dsl::position + dsl::terminator(dsl::eof).list(dsl::p<global_declaration>);
     static constexpr auto value
-        = lexy::as_list<clauf::decl_list> >> construct<clauf::translation_unit>;
+        = lexy::as_list<std::vector<clauf::decl_list>> >> callback<clauf::translation_unit*>(
+              [](compiler_state& state, clauf::location loc,
+                 std::vector<clauf::decl_list>&& list_of_list) {
+                  clauf::decl_list decls;
+                  for (auto list : list_of_list)
+                      for (auto decl : list)
+                          decls.push_back(decl);
+
+                  return state.ast.create<clauf::translation_unit>(loc, decls);
+              });
 };
 } // namespace clauf::grammar
 
