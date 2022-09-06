@@ -7,7 +7,6 @@
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
 #include <lexy/dsl.hpp>
-#include <vector>
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
@@ -570,16 +569,7 @@ struct translation_unit
     static constexpr auto rule
         = dsl::position + dsl::terminator(dsl::eof).list(dsl::p<global_declaration>);
     static constexpr auto value
-        = lexy::as_list<std::vector<clauf::decl_list>> >> callback<clauf::translation_unit*>(
-              [](compiler_state& state, clauf::location loc,
-                 std::vector<clauf::decl_list>&& list_of_list) {
-                  clauf::decl_list decls;
-                  for (auto list : list_of_list)
-                      for (auto decl : list)
-                          decls.push_back(decl);
-
-                  return state.ast.create<clauf::translation_unit>(loc, decls);
-              });
+        = lexy::concat<clauf::decl_list> >> construct<clauf::translation_unit>;
 };
 } // namespace clauf::grammar
 
