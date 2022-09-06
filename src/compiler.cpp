@@ -110,6 +110,8 @@ namespace dsl = lexy::dsl;
 constexpr auto identifier
     = dsl::identifier(dsl::unicode::xid_start_underscore, dsl::unicode::xid_continue);
 
+constexpr auto kw_return = LEXY_KEYWORD("return", identifier);
+
 constexpr auto kw_builtin_types
     = lexy::symbol_table<clauf::builtin_type::type_kind_t>.map(LEXY_LIT("int"),
                                                                clauf::builtin_type::int_);
@@ -119,7 +121,7 @@ constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builti
 
 struct name
 {
-    static constexpr auto rule  = identifier.reserve(dsl::literal_set(kw_builtin_types),
+    static constexpr auto rule  = identifier.reserve(kw_return, dsl::literal_set(kw_builtin_types),
                                                      dsl::literal_set(kw_builtin_stmts));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
@@ -394,6 +396,12 @@ struct builtin_stmt
     static constexpr auto value = construct<clauf::builtin_stmt>;
 };
 
+struct return_stmt
+{
+    static constexpr auto rule  = dsl::position(kw_return) >> dsl::p<expr> + dsl::semicolon;
+    static constexpr auto value = construct<clauf::return_stmt>;
+};
+
 struct block_stmt
 {
     static constexpr auto rule = dsl::position(dsl::curly_bracketed.opt_list(dsl::recurse<stmt>));
@@ -403,8 +411,9 @@ struct block_stmt
 
 struct stmt
 {
-    static constexpr auto rule = dsl::p<block_stmt> | dsl::p<builtin_stmt> //
-                                 | dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
+    static constexpr auto rule
+        = dsl::p<block_stmt> | dsl::p<builtin_stmt> //
+          | dsl::p<return_stmt> | dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
     static constexpr auto value = lexy::forward<clauf::stmt*>;
 };
 } // namespace clauf::grammar

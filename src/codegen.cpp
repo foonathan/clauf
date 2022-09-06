@@ -145,6 +145,18 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                     break;
                 }
         },
+        [&](dryad::traverse_event ev, const clauf::return_stmt* stmt) {
+            if (ev == dryad::traverse_event::enter)
+                generate_debug_location(stmt);
+            else
+            {
+                // The underlying expression has been visited, and we return.
+                lauf_asm_inst_return(b);
+
+                auto unreachable_block = lauf_asm_declare_block(b, 0);
+                lauf_asm_build_block(b, unreachable_block);
+            }
+        },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
         [&](const clauf::variable_decl* decl) {

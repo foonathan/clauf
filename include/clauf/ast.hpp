@@ -43,6 +43,7 @@ enum class node_kind
     decl_stmt,
     expr_stmt,
     builtin_stmt,
+    return_stmt,
     block_stmt,
 
     first_stmt = decl_stmt,
@@ -365,6 +366,18 @@ public:
 
 private:
     DRYAD_ATTRIBUTE_USER_DATA16(builtin_t, builtin_impl);
+};
+
+/// A return statemen, e.g. `return 0;`
+class return_stmt : public dryad::basic_node<node_kind::return_stmt, stmt>
+{
+public:
+    explicit return_stmt(dryad::node_ctor ctor, clauf::expr* expr) : node_base(ctor)
+    {
+        insert_child_after(nullptr, expr);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
 };
 
 /// A statement that contains a list of statements inside a block, e.g. { a; b; c}.
