@@ -9,6 +9,9 @@
 #include <dryad/node_map.hpp>
 #include <dryad/symbol.hpp>
 #include <dryad/tree.hpp>
+#include <lexy/input/buffer.hpp>
+
+#include <clauf/assert.hpp>
 
 namespace clauf
 {
@@ -482,9 +485,16 @@ struct location
     }
 };
 
+struct file
+{
+    lexy::buffer<lexy::utf8_char_encoding> buffer;
+    const char*                            path;
+};
+
 /// The entire AST of a source file.
 struct ast
 {
+    file                                                       input;
     dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
     dryad::tree<node_kind>                                     tree;
     dryad::node_map<node, location>                            locations;
@@ -508,7 +518,9 @@ struct ast
 
     location location_of(const node* n) const
     {
-        return *locations.lookup(n);
+        auto result = locations.lookup(n);
+        CLAUF_ASSERT(result != nullptr, "every node should have a location");
+        return *result;
     }
 };
 

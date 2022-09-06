@@ -10,16 +10,11 @@
 namespace clauf
 {
 struct ast;
-
-struct file
-{
-    lexy::buffer<lexy::utf8_char_encoding> buffer;
-    const char*                            path;
-};
+struct file;
 
 /// If input is well-formed C (including name lookup and type checking), return its AST.
 /// Otherwise, log error and return nothing.
-std::optional<ast> compile(const file& input);
+std::optional<ast> compile(file&& input);
 } // namespace clauf
 
 #endif // CLAUF_COMPILER_HPP_INCLUDED

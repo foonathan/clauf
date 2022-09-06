@@ -13,6 +13,7 @@
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/value.h>
+#include <lexy/input_location.hpp>
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
@@ -29,7 +30,9 @@ struct context
     context(const clauf::ast& ast)
     : ast(&ast), mod(lauf_asm_create_module("main module")),
       builder(lauf_asm_create_builder(lauf_asm_default_build_options))
-    {}
+    {
+        lauf_asm_set_module_debug_path(mod, ast.input.path);
+    }
 
     context(const context&)            = delete;
     context& operator=(const context&) = delete;
@@ -98,6 +101,14 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
     auto entry = lauf_asm_declare_block(b, 0);
     lauf_asm_build_block(b, entry);
 
+    auto generate_debug_location = [&](const clauf::stmt* stmt) {
+        auto location          = ctx.ast->location_of(stmt);
+        auto expanded_location = lexy::get_input_location(ctx.ast->input.buffer, location.begin);
+
+        lauf_asm_build_debug_location(b, {std::uint16_t(expanded_location.line_nr()),
+                                          std::uint16_t(expanded_location.column_nr()), false});
+    };
+
     dryad::visit_tree(
         decl->body(),
         // We don't need to do any codegen for any types in the tree.
@@ -106,26 +117,32 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
         [&](const clauf::block_stmt*) {
             // Do nothing, children do all the work.
         },
-        [&](dryad::traverse_event_exit, const clauf::expr_stmt*) {
-            // The underlying expression has been visited, and we need to remove its value from
-            // the stack.
-            lauf_asm_inst_pop(b, 0);
-        },
-        [&](dryad::traverse_event_exit, const clauf::builtin_stmt* stmt) {
-            // The underlying expression has been visited, and pushed its value onto the stack.
-            switch (stmt->builtin())
-            {
-            case clauf::builtin_stmt::print:
-                // Print the value on top of the stack.
-                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
-                // Remove the value after we have printed it.
+        [&](dryad::traverse_event ev, const clauf::expr_stmt* stmt) {
+            if (ev == dryad::traverse_event::enter)
+                generate_debug_location(stmt);
+            else
+                // The underlying expression has been visited, and we need to remove its value from
+                // the stack.
                 lauf_asm_inst_pop(b, 0);
-                break;
-            case clauf::builtin_stmt::assert:
-                // Assert that the value is non-zero.
-                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
-                break;
-            }
+        },
+        [&](dryad::traverse_event ev, const clauf::builtin_stmt* stmt) {
+            if (ev == dryad::traverse_event::enter)
+                generate_debug_location(stmt);
+            else
+                // The underlying expression has been visited, and pushed its value onto the stack.
+                switch (stmt->builtin())
+                {
+                case clauf::builtin_stmt::print:
+                    // Print the value on top of the stack.
+                    lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
+                    // Remove the value after we have printed it.
+                    lauf_asm_inst_pop(b, 0);
+                    break;
+                case clauf::builtin_stmt::assert:
+                    // Assert that the value is non-zero.
+                    lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
+                    break;
+                }
         },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
@@ -312,6 +329,7 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
         });
 
     // Add an implicit return 0.
+    lauf_asm_build_debug_location(b, {0, 0, true});
     lauf_asm_inst_uint(b, 0);
     lauf_asm_inst_return(b);
 

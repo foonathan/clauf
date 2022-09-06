@@ -513,7 +513,7 @@ struct translation_unit
 };
 } // namespace clauf::grammar
 
-std::optional<clauf::ast> clauf::compile(const file& input)
+std::optional<clauf::ast> clauf::compile(file&& input)
 {
     compiler_state state(input);
     auto           result = lexy::parse<clauf::grammar::translation_unit>(input.buffer, state,
@@ -522,6 +522,7 @@ std::optional<clauf::ast> clauf::compile(const file& input)
         return std::nullopt;
 
     state.ast.tree.set_root(result.value());
+    state.ast.input = std::move(input);
     return std::move(state.ast);
 }
 
