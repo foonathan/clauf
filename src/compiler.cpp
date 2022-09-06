@@ -60,10 +60,29 @@ struct compiler_state
     clauf::diagnostic_logger                             logger;
     clauf::ast                                           ast;
     dryad::tree<clauf::declarator_kind>                  decl_tree;
+    dryad::symbol_table<clauf::ast_symbol, clauf::decl*> global_symbols;
     dryad::symbol_table<clauf::ast_symbol, clauf::decl*> local_symbols;
 
     compiler_state(const clauf::file& input) : logger(input) {}
 };
+
+void insert_new_decl(compiler_state&                                       state,
+                     dryad::symbol_table<clauf::ast_symbol, clauf::decl*>& symbol_table,
+                     clauf::decl* decl, const char* scope_name)
+{
+    auto shadowed = symbol_table.insert_or_shadow(decl->name(), decl);
+    if (shadowed != nullptr)
+    {
+        auto name = decl->name().c_str(state.ast.symbols);
+        state.logger
+            .log(clauf::diagnostic_kind::error, "duplicate %s declaration '%s'", scope_name, name)
+            .annotation(clauf::annotation_kind::secondary, state.ast.location_of(shadowed),
+                        "first declaration")
+            .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                        "second declaration")
+            .finish();
+    }
+}
 
 template <typename ReturnType, typename... Callback>
 constexpr auto callback(Callback... cb)
@@ -352,18 +371,7 @@ struct decl_stmt
             auto result = state.ast.create<clauf::decl_stmt>(loc, decls);
             for (auto decl : result->declarations())
             {
-                auto shadowed = state.local_symbols.insert_or_shadow(decl->name(), decl);
-                if (shadowed != nullptr)
-                {
-                    auto name = decl->name().c_str(state.ast.symbols);
-                    state.logger
-                        .log(diagnostic_kind::error, "duplicate local declaration '%s'", name)
-                        .annotation(annotation_kind::secondary, state.ast.location_of(shadowed),
-                                    "first declaration")
-                        .annotation(annotation_kind::primary, state.ast.location_of(decl),
-                                    "second declaration")
-                        .finish();
-                }
+                insert_new_decl(state, state.local_symbols, decl, "local");
             }
             return result;
         });
@@ -485,9 +493,11 @@ struct function_definition
                   if (auto named = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
                   {
                       auto fn_type = state.ast.create<clauf::function_type>({}, type);
-                      return state.ast.create<clauf::function_decl>(named->name.loc,
-                                                                    named->name.symbol, fn_type,
-                                                                    body);
+                      auto fn_decl = state.ast.create<clauf::function_decl>(named->name.loc,
+                                                                            named->name.symbol,
+                                                                            fn_type, body);
+                      insert_new_decl(state, state.global_symbols, fn_decl, "global");
+                      return fn_decl;
                   }
               }
 
