@@ -29,6 +29,7 @@ enum class node_kind
     //=== expressions ===//
     integer_constant_expr,
     identifier_expr,
+    function_call_expr,
     unary_expr,
     arithmetic_expr,
     comparison_expr,
@@ -163,6 +164,19 @@ public:
 
 private:
     clauf::decl* _decl;
+};
+
+/// A function call expression.
+class function_call_expr : public dryad::basic_node<node_kind::function_call_expr, expr>
+{
+public:
+    explicit function_call_expr(dryad::node_ctor ctor, clauf::type* type, clauf::expr* fn)
+    : node_base(ctor, type)
+    {
+        insert_child_after(this->type(), fn);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, function, type())
 };
 
 enum class unary_op : std::uint16_t
@@ -446,14 +460,16 @@ public:
 class function_decl : public dryad::basic_node<node_kind::function_decl, decl>
 {
 public:
-    explicit function_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type,
-                           clauf::block_stmt* block)
+    explicit function_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type)
     : node_base(ctor, name, type)
+    {}
+
+    DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, type())
+
+    void set_body(clauf::block_stmt* block)
     {
         insert_child_after(this->type(), block);
     }
-
-    DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, type())
 };
 } // namespace clauf
 

@@ -23,10 +23,11 @@ namespace
 {
 struct context
 {
-    const clauf::ast*                                             ast;
-    lauf_asm_module*                                              mod;
-    lauf_asm_builder*                                             builder;
-    dryad::node_map<const clauf::variable_decl, lauf_asm_global*> globals;
+    const clauf::ast*                                               ast;
+    lauf_asm_module*                                                mod;
+    lauf_asm_builder*                                               builder;
+    dryad::node_map<const clauf::variable_decl, lauf_asm_global*>   globals;
+    dryad::node_map<const clauf::function_decl, lauf_asm_function*> functions;
 
     context(const clauf::ast& ast)
     : ast(&ast), mod(lauf_asm_create_module("main module")),
@@ -89,10 +90,11 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op)
     }
 }
 
-lauf_asm_function* codegen_function(const context& ctx, const clauf::function_decl* decl)
+lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* decl)
 {
     auto name = decl->name().c_str(ctx.ast->symbols);
     auto fn   = lauf_asm_add_function(ctx.mod, name, {0, 1});
+    ctx.functions.insert(decl, fn);
 
     dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
 
@@ -187,8 +189,21 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                     return;
                 }
             }
+            else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
+            {
+                // Push the address of the function onto the stack.
+                auto fn = ctx.functions.lookup(fn_decl);
+                CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
+                lauf_asm_inst_function_addr(b, *fn);
+                return;
+            }
 
             CLAUF_UNREACHABLE("currently nothing else supported");
+        },
+        [&](dryad::traverse_event_exit, const clauf::function_call_expr*) {
+            // At this point the address of the function has been pushed onto the stack.
+            // Call it, since we don't have any arguments to push.
+            lauf_asm_inst_call_indirect(b, {0, 1});
         },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
             // At this point, one value has been pushed onto the stack.

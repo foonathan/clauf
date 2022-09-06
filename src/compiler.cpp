@@ -225,13 +225,19 @@ struct expr : lexy::expression_production
         = dsl::parenthesized(dsl::recurse<expr>)
           | dsl::p<identifier_expr> | dsl::else_ >> dsl::p<integer_constant_expr>;
 
+    struct postfix : dsl::postfix_op
+    {
+        static constexpr auto op = op_<0>(LEXY_LIT("(") >> LEXY_LIT(")"));
+        using operand            = dsl::atom;
+    };
+
     struct unary : dsl::prefix_op
     {
         static constexpr auto op = op_<clauf::unary_op::plus>(LEXY_LIT("+"))
                                    / op_<clauf::unary_op::neg>(LEXY_LIT("-"))
                                    / op_<clauf::unary_op::bnot>(LEXY_LIT("~"))
                                    / op_<clauf::unary_op::lnot>(LEXY_LIT("!"));
-        using operand = dsl::atom;
+        using operand = postfix;
     };
 
     struct multiplicative : dsl::infix_op_left
@@ -329,6 +335,10 @@ struct expr : lexy::expression_production
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
+        [](compiler_state& state, clauf::expr* fn, op_tag<int> op) {
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::function_call_expr>(op.loc, type, fn);
+        },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
@@ -506,20 +516,22 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
         {
             state.local_symbols = {};
 
-            auto body = scanner.parse(grammar::block_stmt{});
-
             // TODO: generate error if more than one declarator in function definition
             auto decl = *decl_list.value().begin();
-
             if (auto fn = dryad::node_try_cast<clauf::function_declarator>(decl))
             {
                 if (auto named = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
                 {
                     auto fn_type = state.ast.create<clauf::function_type>({}, type.value());
-                    auto fn_decl = state.ast.create<clauf::function_decl>(named->name.loc,
-                                                                          named->name.symbol,
-                                                                          fn_type, body.value());
+                    auto fn_decl
+                        = state.ast.create<clauf::function_decl>(named->name.loc,
+                                                                 named->name.symbol, fn_type);
                     insert_new_decl(state, state.global_symbols, fn_decl, "global");
+
+                    auto body = scanner.parse(grammar::block_stmt{});
+                    if (!body)
+                        return lexy::scan_failed;
+                    fn_decl->set_body(body.value());
 
                     clauf::decl_list list;
                     list.push_back(fn_decl);

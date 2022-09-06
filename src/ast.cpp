@@ -19,6 +19,8 @@ const char* to_string(clauf::node_kind kind)
         return "integer constant expr";
     case clauf::node_kind::identifier_expr:
         return "identifier expr";
+    case clauf::node_kind::function_call_expr:
+        return "function call expr";
     case clauf::node_kind::unary_expr:
         return "unary expr";
     case clauf::node_kind::arithmetic_expr:
