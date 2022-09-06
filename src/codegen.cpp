@@ -405,6 +405,8 @@ lauf_asm_module* clauf::codegen(const ast& ast)
                 auto global
                     = lauf_asm_add_global_zero_data(ctx.mod,
                                                     LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
+                lauf_asm_set_global_debug_name(ctx.mod, global,
+                                               decl->name().c_str(ctx.ast->symbols));
                 ctx.globals.insert(decl, global);
             });
 
