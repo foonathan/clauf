@@ -488,8 +488,8 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
         if (!type)
             return lexy::scan_failed;
 
-        auto decl = scanner.parse(grammar::declarator{});
-        if (!decl)
+        auto decl_list = scanner.parse(grammar::declarator_list{});
+        if (!decl_list)
             return lexy::scan_failed;
 
         // At this point, look whether we have a {.
@@ -499,7 +499,10 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
 
             auto body = scanner.parse(grammar::block_stmt{});
 
-            if (auto fn = dryad::node_try_cast<clauf::function_declarator>(decl.value()))
+            // TODO: generate error if more than one declarator in function definition
+            auto decl = *decl_list.value().begin();
+
+            if (auto fn = dryad::node_try_cast<clauf::function_declarator>(decl))
             {
                 if (auto named = dryad::node_try_cast<clauf::name_declarator>(fn->child()))
                 {
@@ -525,9 +528,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             if (!scanner)
                 return lexy::scan_failed;
 
-            clauf::declarator_list list;
-            list.push_front(decl.value());
-            auto decls = grammar::declaration::value[state](type.value(), list);
+            auto decls = grammar::declaration::value[state](type.value(), decl_list.value());
             for (auto decl : decls)
                 insert_new_decl(state, state.global_symbols, decl, "global");
             return decls;
