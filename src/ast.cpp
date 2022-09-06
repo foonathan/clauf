@@ -175,6 +175,37 @@ void clauf::dump_ast(const ast& ast)
                 case assignment_op::none:
                     std::printf("=");
                     break;
+
+                case assignment_op::add:
+                    std::printf("+=");
+                    break;
+                case assignment_op::sub:
+                    std::printf("-=");
+                    break;
+                case assignment_op::mul:
+                    std::printf("*=");
+                    break;
+                case assignment_op::div:
+                    std::printf("/=");
+                    break;
+                case assignment_op::rem:
+                    std::printf("%%=");
+                    break;
+                case assignment_op::band:
+                    std::printf("&=");
+                    break;
+                case assignment_op::bor:
+                    std::printf("|=");
+                    break;
+                case assignment_op::bxor:
+                    std::printf("^=");
+                    break;
+                case assignment_op::shl:
+                    std::printf("<<=");
+                    break;
+                case assignment_op::shr:
+                    std::printf(">>=");
+                    break;
                 }
             },
             //=== stmt ===//

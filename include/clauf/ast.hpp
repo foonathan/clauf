@@ -259,6 +259,18 @@ using sequenced_expr = binary_expr<node_kind::sequenced_expr, sequenced_op>;
 enum class assignment_op : std::uint16_t
 {
     none,
+
+    add,
+    sub,
+    mul,
+    div,
+    rem,
+
+    band,
+    bor,
+    bxor,
+    shl,
+    shr,
 };
 
 /// Assignment expression.

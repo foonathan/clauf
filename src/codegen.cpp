@@ -14,6 +14,7 @@
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/value.h>
 
+#include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
 
 //=== codegen ===//
@@ -38,6 +39,51 @@ struct context
         lauf_asm_destroy_builder(builder);
     }
 };
+
+template <typename Op>
+void call_arithmetic_builtin(lauf_asm_builder* b, Op op)
+{
+    switch (op)
+    {
+    case Op::add:
+        lauf_asm_inst_call_builtin(b, lauf_lib_int_sadd(LAUF_LIB_INT_OVERFLOW_PANIC));
+        break;
+    case Op::sub:
+        lauf_asm_inst_call_builtin(b, lauf_lib_int_ssub(LAUF_LIB_INT_OVERFLOW_PANIC));
+        break;
+    case Op::mul:
+        lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
+        break;
+    case Op::div:
+        lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
+        break;
+    case Op::rem:
+        lauf_asm_inst_call_builtin(b, lauf_lib_int_srem);
+        break;
+
+    case Op::band:
+        lauf_asm_inst_call_builtin(b, lauf_lib_bits_and);
+        break;
+    case Op::bor:
+        lauf_asm_inst_call_builtin(b, lauf_lib_bits_or);
+        break;
+    case Op::bxor:
+        lauf_asm_inst_call_builtin(b, lauf_lib_bits_xor);
+        break;
+    case Op::shl:
+        // Overflow wraps around and is not undefined.
+        lauf_asm_inst_call_builtin(b, lauf_lib_bits_shl);
+        break;
+    case Op::shr:
+        // implementation-defined behavior: arithmetic right shift
+        lauf_asm_inst_call_builtin(b, lauf_lib_bits_sshr);
+        break;
+
+    default:
+        CLAUF_UNREACHABLE("there aren't any more arithmetic operators in C?!");
+        break;
+    }
+}
 
 lauf_asm_function* codegen_function(const context& ctx, const clauf::function_decl* decl)
 {
@@ -123,42 +169,7 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
         },
         [&](dryad::traverse_event_exit, const clauf::arithmetic_expr* expr) {
             // At this point, two values have been pushed onto the stack.
-            switch (expr->op())
-            {
-            case clauf::arithmetic_op::add:
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_sadd(LAUF_LIB_INT_OVERFLOW_PANIC));
-                break;
-            case clauf::arithmetic_op::sub:
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_ssub(LAUF_LIB_INT_OVERFLOW_PANIC));
-                break;
-            case clauf::arithmetic_op::mul:
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
-                break;
-            case clauf::arithmetic_op::div:
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
-                break;
-            case clauf::arithmetic_op::rem:
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_srem);
-                break;
-
-            case clauf::arithmetic_op::band:
-                lauf_asm_inst_call_builtin(b, lauf_lib_bits_and);
-                break;
-            case clauf::arithmetic_op::bor:
-                lauf_asm_inst_call_builtin(b, lauf_lib_bits_or);
-                break;
-            case clauf::arithmetic_op::bxor:
-                lauf_asm_inst_call_builtin(b, lauf_lib_bits_xor);
-                break;
-            case clauf::arithmetic_op::shl:
-                // Overflow wraps around and is not undefined.
-                lauf_asm_inst_call_builtin(b, lauf_lib_bits_shl);
-                break;
-            case clauf::arithmetic_op::shr:
-                // implementation-defined behavior: arithmetic right shift
-                lauf_asm_inst_call_builtin(b, lauf_lib_bits_sshr);
-                break;
-            }
+            call_arithmetic_builtin(b, expr->op());
         },
         [&](dryad::traverse_event_exit, const clauf::comparison_expr* expr) {
             // At this point, two values have been pushed onto the stack.
@@ -248,6 +259,34 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
                 break;
             }
         },
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::assignment_expr* expr) {
+            // Evaluate and push the rvalue.
+            visitor(expr->right());
+
+            if (expr->op() != clauf::assignment_op::none)
+            {
+                // Push the value of the lvalue onto the stack.
+                visitor(expr->left());
+
+                // Perform the operation, swapping the values.
+                lauf_asm_inst_roll(b, 1);
+                call_arithmetic_builtin(b, expr->op());
+            }
+
+            // The stack now contains the value we're assigning.
+            // Duplicate it, as we want to leave it on the stack as the result of the expression.
+            lauf_asm_inst_pick(b, 0);
+
+            // Push the address of the lvalue onto the stack.
+            // TODO: only identifier_expr is an lvalue at the moment
+            dryad::visit_node_all(expr->left(), [&](const clauf::identifier_expr* id) {
+                auto var = local_vars.lookup(id->declaration());
+                assert(var != nullptr);
+                lauf_asm_inst_local_addr(b, *var);
+            });
+            // Store the value into address.
+            lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+        },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
             auto block_if_true  = lauf_asm_declare_block(b, cur_stack_size);
@@ -270,25 +309,6 @@ lauf_asm_function* codegen_function(const context& ctx, const clauf::function_de
 
             // Continue, but in the new block.
             lauf_asm_build_block(b, block_end);
-        },
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::assignment_expr* expr) {
-            // Push the value we're assigning onto the stack.
-            visitor(expr->right());
-            // We duplicate it, because we also want to return the value.
-            lauf_asm_inst_pick(b, 0);
-
-            // Push the address of the lvalue onto the stack.
-            // TODO: only identifier_expr is an lvalue at the moment
-            dryad::visit_node_all(expr->left(), [&](const clauf::identifier_expr* id) {
-                auto var = local_vars.lookup(id->declaration());
-                assert(var != nullptr);
-                lauf_asm_inst_local_addr(b, *var);
-            });
-
-            // Store the value into address.
-            lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
-
-            // We leave the value on the stack.
         });
 
     // Add an implicit return 0.

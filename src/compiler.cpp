@@ -283,8 +283,15 @@ struct expr : lexy::expression_production
 
     struct assignment : dsl::infix_op_right
     {
-        static constexpr auto op = op_<clauf::assignment_op::none>(LEXY_LIT("="));
-        using operand            = conditional;
+        static constexpr auto op
+            = op_<clauf::assignment_op::none>(LEXY_LIT("="))
+              / op_<assignment_op::add>(LEXY_LIT("+=")) / op_<assignment_op::sub>(LEXY_LIT("-="))
+              / op_<assignment_op::mul>(LEXY_LIT("*=")) / op_<assignment_op::div>(LEXY_LIT("/="))
+              / op_<assignment_op::rem>(LEXY_LIT("%=")) / op_<assignment_op::band>(LEXY_LIT("&="))
+              / op_<assignment_op::bor>(LEXY_LIT("|=")) / op_<assignment_op::bxor>(LEXY_LIT("^="))
+              / op_<assignment_op::shl>(LEXY_LIT("<<=")) / op_<assignment_op::shr>(LEXY_LIT(">>="));
+
+        using operand = conditional;
     };
 
     struct comma : dsl::infix_op_right
