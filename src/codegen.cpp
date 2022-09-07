@@ -154,9 +154,6 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             {
                 // The underlying expression has been visited, and we return.
                 lauf_asm_inst_return(b);
-
-                auto unreachable_block = lauf_asm_declare_block(b, 0);
-                lauf_asm_build_block(b, unreachable_block);
             }
         },
         //=== declarations ===//
@@ -269,18 +266,24 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 auto block_end          = lauf_asm_declare_block(b, cur_stack_size + 1);
 
                 visitor(expr->left());
-                lauf_asm_inst_branch2(b, block_eval_right, block_shortcircuit);
+                auto const_target = lauf_asm_inst_branch(b, block_eval_right, block_shortcircuit);
 
-                // We only reach this point if left has been true, so whatever is the result of
-                // right is our result.
-                lauf_asm_build_block(b, block_eval_right);
-                visitor(expr->right());
-                lauf_asm_inst_jump(b, block_end);
+                if (const_target != block_shortcircuit)
+                {
+                    // We only reach this point if left has been true, so whatever is the result of
+                    // right is our result.
+                    lauf_asm_build_block(b, block_eval_right);
+                    visitor(expr->right());
+                    lauf_asm_inst_jump(b, block_end);
+                }
 
-                // We only reach this point if left has been false, so that's the result.
-                lauf_asm_build_block(b, block_shortcircuit);
-                lauf_asm_inst_uint(b, 0);
-                lauf_asm_inst_jump(b, block_end);
+                if (const_target != block_eval_right)
+                {
+                    // We only reach this point if left has been false, so that's the result.
+                    lauf_asm_build_block(b, block_shortcircuit);
+                    lauf_asm_inst_uint(b, 0);
+                    lauf_asm_inst_jump(b, block_end);
+                }
 
                 lauf_asm_build_block(b, block_end);
                 break;
@@ -293,18 +296,24 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 auto block_end          = lauf_asm_declare_block(b, cur_stack_size + 1);
 
                 visitor(expr->left());
-                lauf_asm_inst_branch2(b, block_shortcircuit, block_eval_right);
+                auto const_target = lauf_asm_inst_branch(b, block_shortcircuit, block_eval_right);
 
-                // We only reach this point if left has been true, so that's the result.
-                lauf_asm_build_block(b, block_shortcircuit);
-                lauf_asm_inst_uint(b, 1);
-                lauf_asm_inst_jump(b, block_end);
+                if (const_target != block_eval_right)
+                {
+                    // We only reach this point if left has been true, so that's the result.
+                    lauf_asm_build_block(b, block_shortcircuit);
+                    lauf_asm_inst_uint(b, 1);
+                    lauf_asm_inst_jump(b, block_end);
+                }
 
-                // We only reach this point if left has been false, so whatever is the result of
-                // right is our result.
-                lauf_asm_build_block(b, block_eval_right);
-                visitor(expr->right());
-                lauf_asm_inst_jump(b, block_end);
+                if (const_target != block_shortcircuit)
+                {
+                    // We only reach this point if left has been false, so whatever is the result of
+                    // right is our result.
+                    lauf_asm_build_block(b, block_eval_right);
+                    visitor(expr->right());
+                    lauf_asm_inst_jump(b, block_end);
+                }
 
                 lauf_asm_build_block(b, block_end);
                 break;
@@ -367,17 +376,23 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
             // Evaluate the condition and push it onto the stack.
             visitor(expr->condition());
-            lauf_asm_inst_branch2(b, block_if_true, block_if_false);
+            auto const_target = lauf_asm_inst_branch(b, block_if_true, block_if_false);
 
-            // Evaluate the if_true case.
-            lauf_asm_build_block(b, block_if_true);
-            visitor(expr->if_true());
-            lauf_asm_inst_jump(b, block_end);
+            if (const_target != block_if_false)
+            {
+                // Evaluate the if_true case.
+                lauf_asm_build_block(b, block_if_true);
+                visitor(expr->if_true());
+                lauf_asm_inst_jump(b, block_end);
+            }
 
-            // Evaluate the if_false case.
-            lauf_asm_build_block(b, block_if_false);
-            visitor(expr->if_false());
-            lauf_asm_inst_jump(b, block_end);
+            if (const_target != block_if_true)
+            {
+                // Evaluate the if_false case.
+                lauf_asm_build_block(b, block_if_false);
+                visitor(expr->if_false());
+                lauf_asm_inst_jump(b, block_end);
+            }
 
             // Continue, but in the new block.
             lauf_asm_build_block(b, block_end);
