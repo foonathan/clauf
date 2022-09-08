@@ -75,6 +75,23 @@ struct compiler_state
     compiler_state(const clauf::file& input) : logger(input) {}
 };
 
+clauf::type* clone_type(compiler_state& state, const clauf::type* type)
+{
+    return dryad::visit_node_all(
+        type,
+        [&](const clauf::builtin_type* type) -> clauf::type* {
+            return state.ast.create<clauf::builtin_type>({}, type->type_kind());
+        },
+        [&](const clauf::function_type* type) -> clauf::type* {
+            clauf::type_list param_types;
+            for (auto param : type->parameters())
+                param_types.push_back(clone_type(state, param));
+            return state.ast.create<clauf::function_type>({},
+                                                          clone_type(state, type->return_type()),
+                                                          param_types);
+        });
+}
+
 void insert_new_decl(compiler_state&                                       state,
                      dryad::symbol_table<clauf::ast_symbol, clauf::decl*>& symbol_table,
                      clauf::decl* decl, const char* scope_name)
@@ -196,8 +213,7 @@ struct identifier_expr
                       .finish();
               }
 
-              // TODO: don't hardcode type, copy type of declaration instead
-              auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+              auto type = clone_type(state, decl->type());
               return state.ast.create<clauf::identifier_expr>(name.loc, type, decl);
           });
 };
@@ -227,7 +243,17 @@ constexpr auto op_(Rule rule)
     return dsl::op<op_tag_for<Enum>>(rule);
 }
 
-struct expr : lexy::expression_production
+struct expr;
+struct assignment_expr;
+
+struct argument_list
+{
+    static constexpr auto rule = dsl::terminator(LEXY_LIT(")"))
+                                     .opt_list(dsl::recurse<assignment_expr>, dsl::sep(dsl::comma));
+    static constexpr auto value = lexy::as_list<clauf::expr_list>;
+};
+
+struct assignment_expr : lexy::expression_production
 {
     static constexpr auto atom
         = dsl::parenthesized(dsl::recurse<expr>)
@@ -235,7 +261,7 @@ struct expr : lexy::expression_production
 
     struct postfix : dsl::postfix_op
     {
-        static constexpr auto op = op_<0>(LEXY_LIT("(") >> LEXY_LIT(")"));
+        static constexpr auto op = op_<0>(LEXY_LIT("(") >> dsl::p<argument_list>);
         using operand            = dsl::atom;
     };
 
@@ -333,19 +359,38 @@ struct expr : lexy::expression_production
         using operand = conditional;
     };
 
-    struct comma : dsl::infix_op_right
-    {
-        static constexpr auto op = op_<clauf::sequenced_op::comma>(LEXY_LIT(","));
-        using operand            = assignment;
-    };
-
-    using operation = comma;
+    using operation = assignment;
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
-        [](compiler_state& state, clauf::expr* fn, op_tag<int> op) {
+        [](compiler_state& state, clauf::expr* fn, op_tag<int> op, clauf::expr_list arguments) {
+            if (auto fn_type = dryad::node_try_cast<clauf::function_type>(fn->type()))
+            {
+                auto param_count
+                    = std::distance(fn_type->parameters().begin(), fn_type->parameters().end());
+                auto argument_count = std::distance(arguments.begin(), arguments.end());
+                if (param_count != argument_count)
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error,
+                             "invalid argument count %zu for function with %zu parameter(s)",
+                             argument_count, param_count)
+                        .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
+                                    "call here")
+                        .finish();
+                }
+            }
+            else
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "called expression is not a function")
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
+                                "call here")
+                    .finish();
+            }
+
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
-            return state.ast.create<clauf::function_call_expr>(op.loc, type, fn);
+            return state.ast.create<clauf::function_call_expr>(op.loc, type, fn, arguments);
         },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
@@ -377,6 +422,25 @@ struct expr : lexy::expression_production
             auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
             return state.ast.create<clauf::conditional_expr>(op.loc, type, condition, if_true,
                                                              if_false);
+        });
+};
+
+struct expr : lexy::expression_production
+{
+    static constexpr auto atom = dsl::p<assignment_expr>;
+
+    struct operation : dsl::infix_op_left
+    {
+        static constexpr auto op = op_<sequenced_op::comma>(dsl::comma);
+        using operand            = dsl::atom;
+    };
+
+    static constexpr auto value = callback<clauf::expr*>( //
+        [](const compiler_state&, clauf::expr* expr) { return expr; },
+        [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
+           clauf::expr* right) {
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
         });
 };
 } // namespace clauf::grammar
@@ -598,7 +662,10 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             }
 
             state.local_symbols = {};
-            auto body           = scanner.parse(grammar::block_stmt{});
+            for (auto param : fn_decl->parameters())
+                insert_new_decl(state, state.local_symbols, param, "local");
+
+            auto body = scanner.parse(grammar::block_stmt{});
             if (!body)
                 return lexy::scan_failed;
             fn_decl->set_body(body.value());

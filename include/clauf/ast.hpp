@@ -118,6 +118,14 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
+
+    auto parameters() const
+    {
+        using iterator = decltype(children())::iterator;
+        auto begin     = child_after(return_type());
+        auto end       = children().end();
+        return dryad::make_node_range<type>(iterator::from_ptr(begin), end);
+    }
 };
 } // namespace clauf
 
@@ -137,6 +145,8 @@ protected:
         insert_child_after(nullptr, type);
     }
 };
+
+using expr_list = dryad::unlinked_node_list<expr>;
 
 class integer_constant_expr : public dryad::basic_node<node_kind::integer_constant_expr, expr>
 {
@@ -175,10 +185,12 @@ private:
 class function_call_expr : public dryad::basic_node<node_kind::function_call_expr, expr>
 {
 public:
-    explicit function_call_expr(dryad::node_ctor ctor, clauf::type* type, clauf::expr* fn)
+    explicit function_call_expr(dryad::node_ctor ctor, clauf::type* type, clauf::expr* fn,
+                                expr_list arguments)
     : node_base(ctor, type)
     {
         insert_child_after(this->type(), fn);
+        insert_child_list_after(this->function(), arguments);
     }
 
     DRYAD_CHILD_NODE_GETTER(clauf::expr, function, type())
@@ -493,6 +505,21 @@ public:
         insert_child_after(_last_param != nullptr ? (node*)_last_param : (node*)type(), block);
     }
 
+    auto parameters()
+    {
+        using iterator = decltype(children())::iterator;
+        if (_last_param == nullptr)
+        {
+            return dryad::make_node_range<parameter_decl>(iterator(), iterator());
+        }
+        else
+        {
+            auto begin = child_after(type());
+            auto end   = child_after(_last_param);
+            return dryad::make_node_range<parameter_decl>(iterator::from_ptr(begin),
+                                                          iterator::from_ptr(end));
+        }
+    }
     auto parameters() const
     {
         using iterator = decltype(children())::iterator;

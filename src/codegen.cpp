@@ -195,6 +195,17 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                     return;
                 }
             }
+            else if (auto param_decl
+                     = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
+            {
+                if (auto local_var = local_vars.lookup(param_decl))
+                {
+                    // Push the value of the parameter onto the stack.
+                    lauf_asm_inst_local_addr(b, *local_var);
+                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                    return;
+                }
+            }
             else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
             {
                 // Push the address of the function onto the stack.
@@ -206,10 +217,14 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
             CLAUF_UNREACHABLE("currently nothing else supported");
         },
-        [&](dryad::traverse_event_exit, const clauf::function_call_expr*) {
+        [&](dryad::traverse_event_exit, const clauf::function_call_expr* expr) {
             // At this point the address of the function has been pushed onto the stack.
             // Call it, since we don't have any arguments to push.
-            lauf_asm_inst_call_indirect(b, {0, 1});
+            auto fn_type = dryad::node_cast<clauf::function_type>(expr->function()->type());
+            auto argument_count
+                = std::distance(fn_type->parameters().begin(), fn_type->parameters().end());
+            lauf_asm_inst_roll(b, std::uint8_t(argument_count));
+            lauf_asm_inst_call_indirect(b, {std::uint8_t(argument_count), 1});
         },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
             // At this point, one value has been pushed onto the stack.
@@ -366,6 +381,16 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                     {
                         // Push the value of global_var onto the stack.
                         lauf_asm_inst_global_addr(b, *global_var);
+                        return;
+                    }
+                }
+                else if (auto param_decl
+                         = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
+                {
+                    if (auto local_var = local_vars.lookup(param_decl))
+                    {
+                        // Push the address of the parameter onto the stack.
+                        lauf_asm_inst_local_addr(b, *local_var);
                         return;
                     }
                 }
