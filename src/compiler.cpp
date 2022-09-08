@@ -476,17 +476,22 @@ struct declaration
         clauf::decl_list result;
         for (auto decl : decls)
         {
+            // TODO: we only have int as type, so just create a new int every time.
+            // TODO: verify and compute correct return type
+            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+
             dryad::visit_node_all(
                 decl,
                 [&](clauf::name_declarator* name) {
-                    // TODO: we only have int as type, so just create a new int every time.
-                    auto type
-                        = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
                     auto var = state.ast.create<clauf::variable_decl>(name->name.loc,
                                                                       name->name.symbol, type);
                     result.push_back(var);
                 },
-                [&](clauf::function_declarator*) { CLAUF_TODO("create function declaration"); });
+                [&](clauf::function_declarator* decl) {
+                    auto name = get_name(decl);
+                    auto fn   = state.ast.create<clauf::function_decl>(name.loc, name.symbol, type);
+                    result.push_back(fn);
+                });
         }
         return result;
     });
@@ -531,19 +536,28 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             auto decl = decl_list.value().front();
             auto name = get_name(decl);
 
-            // TODO: check the declarator to get return type.
-            auto fn_type = state.ast.create<clauf::function_type>({}, type.value());
-            auto fn_decl = state.ast.create<clauf::function_decl>(name.loc, name.symbol, fn_type);
+            auto existing_decl = state.global_symbols.lookup(name.symbol);
+            auto fn_decl = existing_decl ? dryad::node_try_cast<clauf::function_decl>(existing_decl)
+                                         : nullptr;
+            if (fn_decl != nullptr)
+            {
+                // TODO: verify that definition matches declaration
+            }
+            else
+            {
+                // TODO: check the declarator to get return type.
+                auto fn_type = state.ast.create<clauf::function_type>({}, type.value());
+                fn_decl = state.ast.create<clauf::function_decl>(name.loc, name.symbol, fn_type);
+                insert_new_decl(state, state.global_symbols, fn_decl, "global");
+            }
 
             state.local_symbols = {};
-            insert_new_decl(state, state.global_symbols, fn_decl, "global");
-
-            auto body = scanner.parse(grammar::block_stmt{});
+            auto body           = scanner.parse(grammar::block_stmt{});
             if (!body)
                 return lexy::scan_failed;
             fn_decl->set_body(body.value());
 
-            return fn_decl;
+            return fn_decl->is_linked_in_tree() ? nullptr : fn_decl;
         }
         else
         {
