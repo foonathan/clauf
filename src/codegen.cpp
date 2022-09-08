@@ -217,13 +217,19 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
             CLAUF_UNREACHABLE("currently nothing else supported");
         },
-        [&](dryad::traverse_event_exit, const clauf::function_call_expr* expr) {
-            // At this point the address of the function has been pushed onto the stack.
-            // Call it, since we don't have any arguments to push.
-            auto fn_type = dryad::node_cast<clauf::function_type>(expr->function()->type());
-            auto argument_count
-                = std::distance(fn_type->parameters().begin(), fn_type->parameters().end());
-            lauf_asm_inst_roll(b, std::uint8_t(argument_count));
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::function_call_expr* expr) {
+            // Push each argument onto the stack.
+            auto argument_count = 0u;
+            for (auto argument : expr->arguments())
+            {
+                visitor(argument);
+                ++argument_count;
+            }
+
+            // Push the address of the function onto the stack.
+            visitor(expr->function());
+
+            // Call the function.
             lauf_asm_inst_call_indirect(b, {std::uint8_t(argument_count), 1});
         },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {

@@ -194,6 +194,14 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(clauf::expr, function, type())
+
+    auto arguments() const
+    {
+        using iterator = decltype(children())::iterator;
+        auto begin     = child_after(function());
+        auto end       = children().end();
+        return dryad::make_node_range<expr>(iterator::from_ptr(begin), end);
+    }
 };
 
 enum class unary_op : std::uint16_t
