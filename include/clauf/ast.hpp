@@ -118,14 +118,7 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
-
-    auto parameters() const
-    {
-        using iterator = decltype(children())::iterator;
-        auto begin     = child_after(return_type());
-        auto end       = children().end();
-        return dryad::make_node_range<type>(iterator::from_ptr(begin), end);
-    }
+    DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), nullptr)
 };
 } // namespace clauf
 
@@ -193,15 +186,8 @@ public:
         insert_child_list_after(this->function(), arguments);
     }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, function, type())
-
-    auto arguments() const
-    {
-        using iterator = decltype(children())::iterator;
-        auto begin     = child_after(function());
-        auto end       = children().end();
-        return dryad::make_node_range<expr>(iterator::from_ptr(begin), end);
-    }
+    DRYAD_CHILD_NODE_GETTER(expr, function, type())
+    DRYAD_CHILD_NODE_RANGE_GETTER(expr, arguments, function(), nullptr)
 };
 
 enum class unary_op : std::uint16_t
@@ -251,8 +237,8 @@ public:
         return OpT(this->user_data16());
     }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, left, this->type())
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, right, this->left())
+    DRYAD_CHILD_NODE_GETTER(expr, left, this->type())
+    DRYAD_CHILD_NODE_GETTER(expr, right, left())
 
 private:
     using dryad::basic_node<Kind, expr>::user_data16;
@@ -329,9 +315,9 @@ public:
         insert_children_after(this->type(), condition, if_true, if_false);
     }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, condition, type())
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, if_true, condition())
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, if_false, if_true())
+    DRYAD_CHILD_NODE_GETTER(expr, condition, type())
+    DRYAD_CHILD_NODE_GETTER(expr, if_true, condition())
+    DRYAD_CHILD_NODE_GETTER(expr, if_false, if_true())
 };
 } // namespace clauf
 
@@ -355,16 +341,7 @@ public:
         insert_child_list_after(nullptr, decls);
     }
 
-    auto declarations()
-    {
-        auto children = this->children();
-        return dryad::make_node_range<decl>(children.begin(), children.end());
-    }
-    auto declarations() const
-    {
-        auto children = this->children();
-        return dryad::make_node_range<decl>(children.begin(), children.end());
-    }
+    DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, nullptr)
 };
 
 /// A statement that evaluates an expression, e.g. `f();`
@@ -501,51 +478,23 @@ public:
     : node_base(ctor, name, type)
     {
         insert_child_list_after(this->type(), params);
-        if (!params.empty())
+        if (params.empty())
+            _last_param = this->type();
+        else
             _last_param = params.back();
     }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body,
-                            _last_param != nullptr ? (node*)_last_param : (node*)type())
+    DRYAD_CHILD_NODE_RANGE_GETTER(parameter_decl, parameters, this->type(),
+                                  this->child_after(_last_param))
+    DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, _last_param)
 
     void set_body(clauf::block_stmt* block)
     {
-        insert_child_after(_last_param != nullptr ? (node*)_last_param : (node*)type(), block);
-    }
-
-    auto parameters()
-    {
-        using iterator = decltype(children())::iterator;
-        if (_last_param == nullptr)
-        {
-            return dryad::make_node_range<parameter_decl>(iterator(), iterator());
-        }
-        else
-        {
-            auto begin = child_after(type());
-            auto end   = child_after(_last_param);
-            return dryad::make_node_range<parameter_decl>(iterator::from_ptr(begin),
-                                                          iterator::from_ptr(end));
-        }
-    }
-    auto parameters() const
-    {
-        using iterator = decltype(children())::iterator;
-        if (_last_param == nullptr)
-        {
-            return dryad::make_node_range<parameter_decl>(iterator(), iterator());
-        }
-        else
-        {
-            auto begin = child_after(type());
-            auto end   = child_after(_last_param);
-            return dryad::make_node_range<parameter_decl>(iterator::from_ptr(begin),
-                                                          iterator::from_ptr(end));
-        }
+        insert_child_after(_last_param, block);
     }
 
 private:
-    parameter_decl* _last_param;
+    node* _last_param;
 };
 } // namespace clauf
 
@@ -562,16 +511,7 @@ public:
         insert_child_list_after(nullptr, decls);
     }
 
-    auto declarations()
-    {
-        auto children = node_base::children();
-        return dryad::make_node_range<decl>(children.begin(), children.end());
-    }
-    auto declarations() const
-    {
-        auto children = node_base::children();
-        return dryad::make_node_range<decl>(children.begin(), children.end());
-    }
+    DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, nullptr)
 };
 
 /// The location of an AST node in the input.

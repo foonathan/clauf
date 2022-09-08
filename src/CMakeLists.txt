@@ -23,7 +23,7 @@ FetchContent_MakeAvailable(lexy)
 FetchContent_Declare(lauf URL https://github.com/foonathan/lauf/archive/1971f26f864142094ef7cb9b1f6d4e4e86282752.zip)
 FetchContent_MakeAvailable(lauf)
 
-FetchContent_Declare(dryad URL https://github.com/foonathan/dryad/archive/607de8dd5ad142c303d797258ebd95f087c9524b.zip)
+FetchContent_Declare(dryad URL https://github.com/foonathan/dryad/archive/658e1c6c8254372c17798a5a029e8d6b45a9a7ec.zip)
 FetchContent_MakeAvailable(dryad)
 
 file(DOWNLOAD 
