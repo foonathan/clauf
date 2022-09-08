@@ -52,6 +52,7 @@ enum class node_kind
 
     //=== declarations ===//
     variable_decl,
+    parameter_decl,
     function_decl,
 
     first_decl = variable_decl,
@@ -78,6 +79,8 @@ struct type : dryad::abstract_node_range<node, node_kind::first_type, node_kind:
 {
     DRYAD_ABSTRACT_NODE_CTOR(type)
 };
+
+using type_list = dryad::unlinked_node_list<type>;
 
 /// A builtin type like int.
 class builtin_type : public dryad::basic_node<node_kind::builtin_type, type>
@@ -107,9 +110,11 @@ class function_type
 : public dryad::basic_node<node_kind::function_type, dryad::container_node<type>>
 {
 public:
-    explicit function_type(dryad::node_ctor ctor, type* return_type) : node_base(ctor)
+    explicit function_type(dryad::node_ctor ctor, type* return_type, type_list parameters)
+    : node_base(ctor)
     {
         insert_child_after(nullptr, return_type);
+        insert_child_list_after(return_type, parameters);
     }
 
     DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
@@ -456,20 +461,56 @@ public:
     {}
 };
 
+/// A parameter declaration.
+class parameter_decl : public dryad::basic_node<node_kind::parameter_decl, decl>
+{
+public:
+    explicit parameter_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type)
+    : node_base(ctor, name, type)
+    {}
+};
+
+using parameter_list = dryad::unlinked_node_list<parameter_decl>;
+
 /// A function declaration.
 class function_decl : public dryad::basic_node<node_kind::function_decl, decl>
 {
 public:
-    explicit function_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type)
+    explicit function_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type,
+                           parameter_list params)
     : node_base(ctor, name, type)
-    {}
+    {
+        insert_child_list_after(this->type(), params);
+        if (!params.empty())
+            _last_param = params.back();
+    }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, type())
+    DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body,
+                            _last_param != nullptr ? (node*)_last_param : (node*)type())
 
     void set_body(clauf::block_stmt* block)
     {
-        insert_child_after(this->type(), block);
+        insert_child_after(_last_param != nullptr ? (node*)_last_param : (node*)type(), block);
     }
+
+    auto parameters() const
+    {
+        using iterator = decltype(children())::iterator;
+        if (_last_param == nullptr)
+        {
+            return dryad::make_node_range<parameter_decl>(iterator(), iterator());
+        }
+        else
+        {
+            auto begin = child_after(type());
+            auto end   = child_after(_last_param);
+            return dryad::make_node_range<parameter_decl>(iterator::from_ptr(begin),
+                                                          iterator::from_ptr(end));
+        }
+    }
+
+private:
+    parameter_decl* _last_param;
 };
 } // namespace clauf
 

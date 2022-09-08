@@ -47,6 +47,8 @@ const char* to_string(clauf::node_kind kind)
         return "function type";
     case clauf::node_kind::variable_decl:
         return "variable decl";
+    case clauf::node_kind::parameter_decl:
+        return "parameter decl";
     case clauf::node_kind::function_decl:
         return "function decl";
     }

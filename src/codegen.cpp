@@ -14,6 +14,7 @@
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/value.h>
 #include <lexy/input_location.hpp>
+#include <vector>
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
@@ -92,8 +93,13 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op)
 
 lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* decl)
 {
+    std::vector<const clauf::parameter_decl*> params;
+    for (auto param : decl->parameters())
+        params.push_back(param);
+    auto parameter_count = params.size();
+
     auto name = decl->name().c_str(ctx.ast->symbols);
-    auto fn   = lauf_asm_add_function(ctx.mod, name, {0, 1});
+    auto fn = lauf_asm_add_function(ctx.mod, name, {static_cast<std::uint8_t>(parameter_count), 1});
     ctx.functions.insert(decl, fn);
 
     dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
@@ -101,8 +107,21 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
     auto b = ctx.builder;
     lauf_asm_build(b, ctx.mod, fn);
 
-    auto entry = lauf_asm_declare_block(b, 0);
+    auto entry = lauf_asm_declare_block(b, static_cast<std::uint8_t>(parameter_count));
     lauf_asm_build_block(b, entry);
+
+    // We create variables for all parameters and store the value into them.
+    // Since parameters have been pushed onto the stack and are thus popped in reverse,
+    // we need to iterate in reverse order.
+    for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
+    {
+        // TODO: types other than int.
+        auto var = lauf_asm_build_local(b, LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
+        local_vars.insert(*iter, var);
+
+        lauf_asm_inst_local_addr(b, var);
+        lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+    }
 
     dryad::visit_tree(
         decl->body(),
