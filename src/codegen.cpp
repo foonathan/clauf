@@ -165,6 +165,37 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             // The underlying expression has been visited, and we return.
             lauf_asm_inst_return(b);
         },
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::if_stmt* stmt) {
+            auto block_if_true  = lauf_asm_declare_block(b, 0);
+            auto block_if_false = lauf_asm_declare_block(b, 0);
+            auto block_end      = lauf_asm_declare_block(b, 0);
+
+            // Evaluate the condition.
+            visitor(stmt->condition());
+            // Now 0/1 is on top of the stack.
+            // Branch to one of the basic blocks.
+            auto const_target = lauf_asm_inst_branch(b, block_if_true, block_if_false);
+
+            if (const_target != block_if_false)
+            {
+                // Evaluate the then statement.
+                lauf_asm_build_block(b, block_if_true);
+                visitor(stmt->then());
+                lauf_asm_inst_jump(b, block_end);
+            }
+
+            if (const_target != block_if_true)
+            {
+                // Evaluate the else statement.
+                lauf_asm_build_block(b, block_if_false);
+                if (stmt->has_else())
+                    visitor(stmt->else_());
+                lauf_asm_inst_jump(b, block_end);
+            }
+
+            // Continue, but in the new block.
+            lauf_asm_build_block(b, block_end);
+        },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
         [&](const clauf::variable_decl* decl) {

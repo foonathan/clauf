@@ -136,6 +136,8 @@ constexpr auto identifier
     = dsl::identifier(dsl::unicode::xid_start_underscore, dsl::unicode::xid_continue);
 
 constexpr auto kw_return = LEXY_KEYWORD("return", identifier);
+constexpr auto kw_if     = LEXY_KEYWORD("if", identifier);
+constexpr auto kw_else   = LEXY_KEYWORD("else", identifier);
 
 constexpr auto kw_builtin_types
     = lexy::symbol_table<clauf::builtin_type::type_kind_t>.map(LEXY_LIT("int"),
@@ -484,6 +486,15 @@ struct return_stmt
     static constexpr auto value = construct<clauf::return_stmt>;
 };
 
+struct if_stmt
+{
+    static constexpr auto rule
+        = dsl::position(kw_if)
+          >> dsl::parenthesized(dsl::p<expr>)
+                 + dsl::recurse<stmt> + dsl::if_(kw_else >> dsl::recurse<stmt>);
+    static constexpr auto value = construct<clauf::if_stmt>;
+};
+
 struct block_stmt
 {
     static constexpr auto rule = dsl::position(dsl::curly_bracketed.opt_list(dsl::recurse<stmt>));
@@ -493,9 +504,9 @@ struct block_stmt
 
 struct stmt
 {
-    static constexpr auto rule
-        = dsl::p<block_stmt> | dsl::p<builtin_stmt> //
-          | dsl::p<return_stmt> | dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
+    static constexpr auto rule = dsl::p<block_stmt> | dsl::p<builtin_stmt> //
+                                 | dsl::p<return_stmt> | dsl::p<if_stmt> | //
+                                 dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
     static constexpr auto value = lexy::forward<clauf::stmt*>;
 };
 } // namespace clauf::grammar

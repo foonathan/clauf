@@ -41,6 +41,8 @@ const char* to_string(clauf::node_kind kind)
         return "builtin stmt";
     case clauf::node_kind::return_stmt:
         return "return stmt";
+    case clauf::node_kind::if_stmt:
+        return "if stmt";
     case clauf::node_kind::block_stmt:
         return "block stmt";
     case clauf::node_kind::function_type:

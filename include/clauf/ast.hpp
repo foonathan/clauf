@@ -45,6 +45,7 @@ enum class node_kind
     expr_stmt,
     builtin_stmt,
     return_stmt,
+    if_stmt,
     block_stmt,
 
     first_stmt = decl_stmt,
@@ -394,6 +395,33 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
+};
+
+/// An if statement.
+class if_stmt : public dryad::basic_node<node_kind::if_stmt, stmt>
+{
+public:
+    explicit if_stmt(dryad::node_ctor ctor, clauf::expr* condition, clauf::stmt* then)
+    : node_base(ctor)
+    {
+        insert_children_after(nullptr, condition, then);
+    }
+    explicit if_stmt(dryad::node_ctor ctor, clauf::expr* condition, clauf::stmt* then,
+                     clauf::stmt* else_)
+    : node_base(ctor)
+    {
+        insert_children_after(nullptr, condition, then, else_);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, condition, nullptr)
+    DRYAD_CHILD_NODE_GETTER(clauf::stmt, then, condition())
+
+    bool has_else() const
+    {
+        return child_after(then()) != this;
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::stmt, else_, then())
 };
 
 /// A statement that contains a list of statements inside a block, e.g. { a; b; c}.
