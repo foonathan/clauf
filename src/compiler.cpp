@@ -68,7 +68,7 @@ struct compiler_state
 {
     clauf::diagnostic_logger                             logger;
     clauf::ast                                           ast;
-    dryad::tree<clauf::declarator_kind>                  decl_tree;
+    dryad::tree<clauf::declarator>                       decl_tree;
     dryad::symbol_table<clauf::ast_symbol, clauf::decl*> global_symbols;
     dryad::symbol_table<clauf::ast_symbol, clauf::decl*> local_symbols;
 

@@ -122,7 +122,7 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
-    DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), nullptr)
+    DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), this)
 };
 } // namespace clauf
 
@@ -191,7 +191,7 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(expr, function, type())
-    DRYAD_CHILD_NODE_RANGE_GETTER(expr, arguments, function(), nullptr)
+    DRYAD_CHILD_NODE_RANGE_GETTER(expr, arguments, function(), this)
 };
 
 enum class unary_op : std::uint16_t
@@ -345,7 +345,7 @@ public:
         insert_child_list_after(nullptr, decls);
     }
 
-    DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, nullptr)
+    DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, this)
 };
 
 /// A statement that evaluates an expression, e.g. `f();`
@@ -435,7 +435,7 @@ public:
 
     bool has_else() const
     {
-        return child_after(then()) != this;
+        return node_after(then()) != this;
     }
 
     DRYAD_CHILD_NODE_GETTER(clauf::stmt, else_, then())
@@ -564,7 +564,7 @@ public:
     }
 
     DRYAD_CHILD_NODE_RANGE_GETTER(parameter_decl, parameters, this->type(),
-                                  this->child_after(_last_param))
+                                  this->node_after(_last_param))
     DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, _last_param)
 
     void set_body(clauf::block_stmt* block)
@@ -590,7 +590,7 @@ public:
         insert_child_list_after(nullptr, decls);
     }
 
-    DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, nullptr)
+    DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, this)
 };
 
 /// The location of an AST node in the input.
@@ -620,16 +620,16 @@ struct ast
 {
     file                                                       input;
     dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
-    dryad::tree<node_kind>                                     tree;
+    dryad::tree<translation_unit>                              tree;
     dryad::node_map<node, location>                            locations;
 
     translation_unit* root()
     {
-        return dryad::node_cast<translation_unit>(tree.root());
+        return tree.root();
     }
     const translation_unit* root() const
     {
-        return dryad::node_cast<translation_unit>(tree.root());
+        return tree.root();
     }
 
     template <typename T, typename... Args>
