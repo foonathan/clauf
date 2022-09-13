@@ -196,6 +196,38 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             // Continue, but in the new block.
             lauf_asm_build_block(b, block_end);
         },
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::while_stmt* stmt) {
+            // loop_header:
+            //      evaluate condition
+            //      branch to loop_end or loop_body
+            // loop_body:
+            //      evaluate body
+            //      jump to loop_header
+            // loop_end:
+            //      continue with rest of the program
+
+            auto block_loop_header = lauf_asm_declare_block(b, 0);
+            auto block_loop_body   = lauf_asm_declare_block(b, 0);
+            auto block_loop_end    = lauf_asm_declare_block(b, 0);
+
+            lauf_asm_inst_jump(b, block_loop_header);
+
+            // Evaluate condition in loop header and branch.
+            lauf_asm_build_block(b, block_loop_header);
+            visitor(stmt->condition());
+            auto const_target = lauf_asm_inst_branch(b, block_loop_body, block_loop_end);
+
+            // Evaluate body.
+            if (const_target != block_loop_end)
+            {
+                lauf_asm_build_block(b, block_loop_body);
+                visitor(stmt->body());
+                lauf_asm_inst_jump(b, block_loop_header);
+            }
+
+            // Continue on with the rest.
+            lauf_asm_build_block(b, block_loop_end);
+        },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
         [&](const clauf::variable_decl* decl) {

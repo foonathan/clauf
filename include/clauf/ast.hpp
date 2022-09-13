@@ -46,6 +46,7 @@ enum class node_kind
     builtin_stmt,
     return_stmt,
     if_stmt,
+    while_stmt,
     block_stmt,
 
     first_stmt = decl_stmt,
@@ -422,6 +423,20 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(clauf::stmt, else_, then())
+};
+
+/// A while statement.
+class while_stmt : public dryad::basic_node<node_kind::while_stmt, stmt>
+{
+public:
+    explicit while_stmt(dryad::node_ctor ctor, clauf::expr* condition, clauf::stmt* body)
+    : node_base(ctor)
+    {
+        insert_children_after(nullptr, condition, body);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, condition, nullptr)
+    DRYAD_CHILD_NODE_GETTER(clauf::stmt, body, condition())
 };
 
 /// A statement that contains a list of statements inside a block, e.g. { a; b; c}.
