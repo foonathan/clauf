@@ -230,6 +230,17 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
             },
+            [&](const while_stmt* stmt) {
+                switch (stmt->loop_kind())
+                {
+                case while_stmt::loop_while:
+                    std::printf("while ...");
+                    break;
+                case while_stmt::loop_do_while:
+                    std::printf("do ... while");
+                    break;
+                }
+            },
             //=== decls ===//
             [&](const decl* d) { std::printf("'%s'", d->name().c_str(ast.symbols)); });
 

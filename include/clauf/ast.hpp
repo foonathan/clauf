@@ -429,14 +429,34 @@ public:
 class while_stmt : public dryad::basic_node<node_kind::while_stmt, stmt>
 {
 public:
-    explicit while_stmt(dryad::node_ctor ctor, clauf::expr* condition, clauf::stmt* body)
+    enum loop_kind_t : std::uint16_t
+    {
+        loop_while,
+        loop_do_while,
+    };
+
+    explicit while_stmt(dryad::node_ctor ctor, loop_kind_t kind, clauf::expr* condition,
+                        clauf::stmt* body)
     : node_base(ctor)
     {
         insert_children_after(nullptr, condition, body);
+        set_loop_kind_impl(kind);
     }
+    explicit while_stmt(dryad::node_ctor ctor, loop_kind_t kind, clauf::stmt* body,
+                        clauf::expr* condition)
+    : while_stmt(ctor, kind, condition, body)
+    {}
 
     DRYAD_CHILD_NODE_GETTER(clauf::expr, condition, nullptr)
     DRYAD_CHILD_NODE_GETTER(clauf::stmt, body, condition())
+
+    loop_kind_t loop_kind() const
+    {
+        return loop_kind_impl();
+    }
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(loop_kind_t, loop_kind_impl);
 };
 
 /// A statement that contains a list of statements inside a block, e.g. { a; b; c}.

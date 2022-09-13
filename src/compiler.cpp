@@ -139,6 +139,7 @@ constexpr auto kw_return = LEXY_KEYWORD("return", identifier);
 constexpr auto kw_if     = LEXY_KEYWORD("if", identifier);
 constexpr auto kw_else   = LEXY_KEYWORD("else", identifier);
 constexpr auto kw_while  = LEXY_KEYWORD("while", identifier);
+constexpr auto kw_do     = LEXY_KEYWORD("do", identifier);
 
 constexpr auto kw_builtin_types
     = lexy::symbol_table<clauf::builtin_type::type_kind_t>.map(LEXY_LIT("int"),
@@ -498,8 +499,28 @@ struct if_stmt
 
 struct while_stmt
 {
+    struct prefix
+    {
+        static constexpr auto rule  = kw_while;
+        static constexpr auto value = lexy::constant(clauf::while_stmt::loop_while);
+    };
+
     static constexpr auto rule
-        = dsl::position(kw_while) >> dsl::parenthesized(dsl::p<expr>) + dsl::recurse<stmt>;
+        = dsl::position(dsl::p<prefix>) >> dsl::parenthesized(dsl::p<expr>) + dsl::recurse<stmt>;
+    static constexpr auto value = construct<clauf::while_stmt>;
+};
+
+struct do_while_stmt
+{
+    struct prefix
+    {
+        static constexpr auto rule  = kw_do;
+        static constexpr auto value = lexy::constant(clauf::while_stmt::loop_do_while);
+    };
+
+    static constexpr auto rule
+        = dsl::position(dsl::p<prefix>)
+          >> dsl::recurse<stmt> + kw_while + dsl::parenthesized(dsl::p<expr>) + dsl::semicolon;
     static constexpr auto value = construct<clauf::while_stmt>;
 };
 
@@ -512,8 +533,9 @@ struct block_stmt
 
 struct stmt
 {
-    static constexpr auto rule = dsl::p<block_stmt> | dsl::p<builtin_stmt>                    //
-                                 | dsl::p<return_stmt> | dsl::p<if_stmt> | dsl::p<while_stmt> //
+    static constexpr auto rule = dsl::p<block_stmt> | dsl::p<builtin_stmt>    //
+                                 | dsl::p<return_stmt> | dsl::p<if_stmt>      //
+                                 | dsl::p<while_stmt> | dsl::p<do_while_stmt> //
                                  | dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
     static constexpr auto value = lexy::forward<clauf::stmt*>;
 };

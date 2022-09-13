@@ -210,20 +210,26 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             auto block_loop_body   = lauf_asm_declare_block(b, 0);
             auto block_loop_end    = lauf_asm_declare_block(b, 0);
 
-            lauf_asm_inst_jump(b, block_loop_header);
+            switch (stmt->loop_kind())
+            {
+            case clauf::while_stmt::loop_while:
+                // For a while loop we need to check the loop header first.
+                lauf_asm_inst_jump(b, block_loop_header);
+                break;
+            case clauf::while_stmt::loop_do_while:
+                // For a do while loop we need to execute the body once first.
+                lauf_asm_inst_jump(b, block_loop_body);
+            }
 
             // Evaluate condition in loop header and branch.
             lauf_asm_build_block(b, block_loop_header);
             visitor(stmt->condition());
-            auto const_target = lauf_asm_inst_branch(b, block_loop_body, block_loop_end);
+            lauf_asm_inst_branch(b, block_loop_body, block_loop_end);
 
             // Evaluate body.
-            if (const_target != block_loop_end)
-            {
-                lauf_asm_build_block(b, block_loop_body);
-                visitor(stmt->body());
-                lauf_asm_inst_jump(b, block_loop_header);
-            }
+            lauf_asm_build_block(b, block_loop_body);
+            visitor(stmt->body());
+            lauf_asm_inst_jump(b, block_loop_header);
 
             // Continue on with the rest.
             lauf_asm_build_block(b, block_loop_end);
