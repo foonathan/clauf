@@ -123,6 +123,8 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
     }
 
+    lauf_asm_block* block_loop_end    = nullptr;
+    lauf_asm_block* block_loop_header = nullptr;
     dryad::visit_tree(
         decl->body(),
         // We don't need to do any codegen for any types in the tree.
@@ -165,6 +167,14 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             // The underlying expression has been visited, and we return.
             lauf_asm_inst_return(b);
         },
+        [&](const clauf::break_stmt*) {
+            CLAUF_ASSERT(block_loop_end != nullptr, "break statement outside of loop");
+            lauf_asm_inst_jump(b, block_loop_end);
+        },
+        [&](const clauf::continue_stmt*) {
+            CLAUF_ASSERT(block_loop_header != nullptr, "continue statement outside of loop");
+            lauf_asm_inst_jump(b, block_loop_header);
+        },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::if_stmt* stmt) {
             auto block_if_true  = lauf_asm_declare_block(b, 0);
             auto block_if_false = lauf_asm_declare_block(b, 0);
@@ -206,9 +216,12 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             // loop_end:
             //      continue with rest of the program
 
-            auto block_loop_header = lauf_asm_declare_block(b, 0);
-            auto block_loop_body   = lauf_asm_declare_block(b, 0);
-            auto block_loop_end    = lauf_asm_declare_block(b, 0);
+            auto prev_loop_header = block_loop_header;
+            auto prev_loop_end    = block_loop_end;
+
+            block_loop_header    = lauf_asm_declare_block(b, 0);
+            auto block_loop_body = lauf_asm_declare_block(b, 0);
+            block_loop_end       = lauf_asm_declare_block(b, 0);
 
             switch (stmt->loop_kind())
             {
@@ -233,6 +246,8 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
             // Continue on with the rest.
             lauf_asm_build_block(b, block_loop_end);
+            block_loop_header = prev_loop_header;
+            block_loop_end    = prev_loop_end;
         },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,

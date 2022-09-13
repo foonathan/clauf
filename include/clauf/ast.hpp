@@ -45,6 +45,8 @@ enum class node_kind
     expr_stmt,
     builtin_stmt,
     return_stmt,
+    break_stmt,
+    continue_stmt,
     if_stmt,
     while_stmt,
     block_stmt,
@@ -386,7 +388,7 @@ private:
     DRYAD_ATTRIBUTE_USER_DATA16(builtin_t, builtin_impl);
 };
 
-/// A return statemen, e.g. `return 0;`
+/// A return statement, e.g. `return 0;`
 class return_stmt : public dryad::basic_node<node_kind::return_stmt, stmt>
 {
 public:
@@ -396,6 +398,20 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
+};
+
+/// A break statement.
+class break_stmt : public dryad::basic_node<node_kind::break_stmt, stmt>
+{
+public:
+    DRYAD_NODE_CTOR(break_stmt)
+};
+
+/// A continue statement.
+class continue_stmt : public dryad::basic_node<node_kind::continue_stmt, stmt>
+{
+public:
+    DRYAD_NODE_CTOR(continue_stmt)
 };
 
 /// An if statement.
