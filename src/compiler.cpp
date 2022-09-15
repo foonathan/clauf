@@ -64,15 +64,35 @@ name get_name(const declarator* decl)
 
 namespace
 {
+struct scope
+{
+    enum kind_t
+    {
+        // The global scope of the translation unit.
+        global,
+        // The local scope inside a function. Local scopes can be nested.
+        local,
+        // The local scope of a loop; here break and continue is allowed.
+        local_loop,
+    } kind;
+    dryad::symbol_table<clauf::ast_symbol, clauf::decl*> symbols;
+    scope*                                               parent;
+
+    scope(kind_t kind, scope* parent) : kind(kind), parent(parent) {}
+};
+
 struct compiler_state
 {
-    clauf::diagnostic_logger                             logger;
-    clauf::ast                                           ast;
-    dryad::tree<clauf::declarator>                       decl_tree;
-    dryad::symbol_table<clauf::ast_symbol, clauf::decl*> global_symbols;
-    dryad::symbol_table<clauf::ast_symbol, clauf::decl*> local_symbols;
+    clauf::diagnostic_logger       logger;
+    clauf::ast                     ast;
+    dryad::tree<clauf::declarator> decl_tree;
 
-    compiler_state(const clauf::file& input) : logger(input) {}
+    scope  global_scope;
+    scope* current_scope;
+
+    compiler_state(const clauf::file& input)
+    : logger(input), global_scope(scope::global, nullptr), current_scope(&global_scope)
+    {}
 };
 
 clauf::type* clone_type(compiler_state& state, const clauf::type* type)
@@ -92,20 +112,37 @@ clauf::type* clone_type(compiler_state& state, const clauf::type* type)
         });
 }
 
-void insert_new_decl(compiler_state&                                       state,
-                     dryad::symbol_table<clauf::ast_symbol, clauf::decl*>& symbol_table,
-                     clauf::decl* decl, const char* scope_name)
+void insert_new_decl(compiler_state& state, clauf::decl* decl)
 {
-    auto shadowed = symbol_table.insert_or_shadow(decl->name(), decl);
+    auto shadowed = state.current_scope->symbols.insert_or_shadow(decl->name(), decl);
     if (shadowed != nullptr)
     {
         auto name = decl->name().c_str(state.ast.symbols);
         state.logger
-            .log(clauf::diagnostic_kind::error, "duplicate %s declaration '%s'", scope_name, name)
+            .log(clauf::diagnostic_kind::error, "duplicate %s declaration '%s'",
+                 state.current_scope->kind == scope::global ? "global" : "local", name)
             .annotation(clauf::annotation_kind::secondary, state.ast.location_of(shadowed),
                         "first declaration")
             .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
                         "second declaration")
+            .finish();
+    }
+}
+
+void check_inside_loop(compiler_state& state, clauf::location loc)
+{
+    auto inside_loop = false;
+    for (auto scope = state.current_scope; scope != nullptr; scope = scope->parent)
+        if (scope->kind == scope::local_loop)
+        {
+            inside_loop = true;
+            break;
+        }
+
+    if (!inside_loop)
+    {
+        state.logger.log(clauf::diagnostic_kind::error, "cannot use break/continue outside loop")
+            .annotation(clauf::annotation_kind::primary, loc, "here")
             .finish();
     }
 }
@@ -209,9 +246,13 @@ struct identifier_expr
 
     static constexpr auto value
         = callback<clauf::identifier_expr*>([](compiler_state& state, clauf::name name) {
-              auto decl = state.local_symbols.lookup(name.symbol);
-              if (decl == nullptr)
-                  decl = state.global_symbols.lookup(name.symbol);
+              clauf::decl* decl = nullptr;
+              for (auto scope = state.current_scope; scope != nullptr; scope = scope->parent)
+              {
+                  decl = scope->symbols.lookup(name.symbol);
+                  if (decl != nullptr)
+                      break;
+              }
 
               if (decl == nullptr)
               {
@@ -466,9 +507,7 @@ struct decl_stmt
         [](compiler_state& state, clauf::location loc, decl_list decls) {
             auto result = state.ast.create<clauf::decl_stmt>(loc, decls);
             for (auto decl : result->declarations())
-            {
-                insert_new_decl(state, state.local_symbols, decl, "local");
-            }
+                insert_new_decl(state, decl);
             return result;
         });
 };
@@ -494,21 +533,48 @@ struct return_stmt
 
 struct break_stmt
 {
-    static constexpr auto rule  = dsl::position(kw_break) >> dsl::semicolon;
-    static constexpr auto value = construct<clauf::break_stmt>;
+    static constexpr auto rule = dsl::capture(kw_break) >> dsl::semicolon;
+    static constexpr auto value
+        = callback<clauf::break_stmt*>([](compiler_state& state, auto lexeme) {
+              check_inside_loop(state, {lexeme.begin(), lexeme.end()});
+              return state.ast.create<clauf::break_stmt>(lexeme.begin());
+          });
 };
 struct continue_stmt
 {
-    static constexpr auto rule  = dsl::position(kw_continue) >> dsl::semicolon;
-    static constexpr auto value = construct<clauf::continue_stmt>;
+    static constexpr auto rule = dsl::capture(kw_continue) >> dsl::semicolon;
+    static constexpr auto value
+        = callback<clauf::continue_stmt*>([](compiler_state& state, auto lexeme) {
+              check_inside_loop(state, {lexeme.begin(), lexeme.end()});
+              return state.ast.create<clauf::continue_stmt>(lexeme.begin());
+          });
+};
+
+template <scope::kind_t Kind>
+struct secondary_block : lexy::scan_production<clauf::stmt*>
+{
+    static constexpr auto name = "secondary_block";
+
+    template <typename Context, typename Reader>
+    static scan_result scan(lexy::rule_scanner<Context, Reader>& scanner, compiler_state& state)
+    {
+        scope local_scope(Kind, state.current_scope);
+        state.current_scope = &local_scope;
+
+        scan_result result;
+        scanner.parse(result, dsl::recurse<stmt>);
+
+        state.current_scope = state.current_scope->parent;
+        return result;
+    }
 };
 
 struct if_stmt
 {
     static constexpr auto rule
         = dsl::position(kw_if)
-          >> dsl::parenthesized(dsl::p<expr>)
-                 + dsl::recurse<stmt> + dsl::if_(kw_else >> dsl::recurse<stmt>);
+          >> dsl::parenthesized(dsl::p<expr>) + dsl::p<secondary_block<scope::local>> //
+                 + dsl::if_(kw_else >> dsl::recurse<secondary_block<scope::local>>);
     static constexpr auto value = construct<clauf::if_stmt>;
 };
 
@@ -521,7 +587,8 @@ struct while_stmt
     };
 
     static constexpr auto rule
-        = dsl::position(dsl::p<prefix>) >> dsl::parenthesized(dsl::p<expr>) + dsl::recurse<stmt>;
+        = dsl::position(dsl::p<prefix>)
+          >> dsl::parenthesized(dsl::p<expr>) + dsl::p<secondary_block<scope::local_loop>>;
     static constexpr auto value = construct<clauf::while_stmt>;
 };
 
@@ -534,16 +601,33 @@ struct do_while_stmt
     };
 
     static constexpr auto rule
-        = dsl::position(dsl::p<prefix>)
-          >> dsl::recurse<stmt> + kw_while + dsl::parenthesized(dsl::p<expr>) + dsl::semicolon;
+        = dsl::position(dsl::p<prefix>) >> dsl::p<secondary_block<scope::local_loop>> + kw_while
+                                               + dsl::parenthesized(dsl::p<expr>) + dsl::semicolon;
     static constexpr auto value = construct<clauf::while_stmt>;
 };
 
-struct block_stmt
+struct block_stmt : lexy::scan_production<clauf::block_stmt*>
 {
-    static constexpr auto rule = dsl::position(dsl::curly_bracketed.opt_list(dsl::recurse<stmt>));
+    struct impl
+    {
+        static constexpr auto rule
+            = dsl::position(dsl::curly_bracketed.opt_list(dsl::recurse<stmt>));
+        static constexpr auto value = lexy::as_list<stmt_list> >> construct<clauf::block_stmt>;
+    };
 
-    static constexpr auto value = lexy::as_list<stmt_list> >> construct<clauf::block_stmt>;
+    static constexpr auto rule = dsl::peek(dsl::lit_c<'{'>) >> dsl::scan;
+
+    template <typename Context, typename Reader>
+    static scan_result scan(lexy::rule_scanner<Context, Reader>& scanner, compiler_state& state)
+    {
+        scope local_scope(scope::local, state.current_scope);
+        state.current_scope = &local_scope;
+
+        auto result = scanner.parse(impl{});
+
+        state.current_scope = state.current_scope->parent;
+        return result;
+    }
 };
 
 struct stmt
@@ -692,7 +776,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             auto decl = dryad::node_cast<clauf::function_declarator>(decl_list.value().front());
             auto name = get_name(decl);
 
-            auto existing_decl = state.global_symbols.lookup(name.symbol);
+            auto existing_decl = state.current_scope->symbols.lookup(name.symbol);
             auto fn_decl = existing_decl ? dryad::node_try_cast<clauf::function_decl>(existing_decl)
                                          : nullptr;
             if (fn_decl != nullptr)
@@ -716,18 +800,20 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
                     = state.ast.create<clauf::function_type>({}, type.value(), parameter_types);
                 fn_decl = state.ast.create<clauf::function_decl>(name.loc, name.symbol, fn_type,
                                                                  decl->parameters);
-                insert_new_decl(state, state.global_symbols, fn_decl, "global");
+                insert_new_decl(state, fn_decl);
             }
 
-            state.local_symbols = {};
+            scope local_scope(scope::local, state.current_scope);
+            state.current_scope = &local_scope;
             for (auto param : fn_decl->parameters())
-                insert_new_decl(state, state.local_symbols, param, "local");
+                insert_new_decl(state, param);
 
             auto body = scanner.parse(grammar::block_stmt{});
             if (!body)
                 return lexy::scan_failed;
             fn_decl->set_body(body.value());
 
+            state.current_scope = state.current_scope->parent;
             return fn_decl->is_linked_in_tree() ? nullptr : fn_decl;
         }
         else
@@ -739,7 +825,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
 
             auto result = grammar::declaration::value[state](type.value(), decl_list.value());
             for (auto decl : result)
-                insert_new_decl(state, state.global_symbols, decl, "global");
+                insert_new_decl(state, decl);
             return result;
         }
     }
