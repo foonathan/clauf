@@ -252,16 +252,17 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
         [&](dryad::traverse_event_exit, const clauf::variable_decl* decl) {
-            // If we have an initializer, it has been visited already and its value pushed on top of
-            // the stack.
-
             // TODO: handle types other than int
             auto var = lauf_asm_build_local(b, LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
             local_vars.insert(decl, var);
 
-            // Store the initial value in the local variable.
-            lauf_asm_inst_local_addr(b, var);
-            lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+            if (decl->has_initializer())
+            {
+                // If we have an initializer, it has been visited already and its value pushed on
+                // top of the stack. Store the initial value in the local variable.
+                lauf_asm_inst_local_addr(b, var);
+                lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+            }
         },
         //=== expression ===//
         [&](const clauf::integer_constant_expr* expr) {
