@@ -144,8 +144,9 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         },
         [&](dryad::traverse_event_exit, const clauf::expr_stmt*) {
             // The underlying expression has been visited, and we need to remove its value from
-            // the stack.
-            lauf_asm_inst_pop(b, 0);
+            // the stack -- if the expression did not do that for us already.
+            if (lauf_asm_build_get_vstack_size(b) == 1)
+                lauf_asm_inst_pop(b, 0);
         },
         [&](dryad::traverse_event_exit, const clauf::builtin_stmt* stmt) {
             // The underlying expression has been visited, and pushed its value onto the stack.
@@ -447,22 +448,26 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             }
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::assignment_expr* expr) {
-            // Evaluate and push the rvalue.
-            visitor(expr->right());
-
+            // Push the value we're assigning.
+            // This might involve an arithmetic operation.
             if (expr->op() != clauf::assignment_op::none)
             {
-                // Push the value of the lvalue onto the stack.
                 visitor(expr->left());
-
-                // Perform the operation, swapping the values.
-                lauf_asm_inst_roll(b, 1);
+                visitor(expr->right());
                 call_arithmetic_builtin(b, expr->op());
+            }
+            else
+            {
+                visitor(expr->right());
             }
 
             // The stack now contains the value we're assigning.
-            // Duplicate it, as we want to leave it on the stack as the result of the expression.
-            lauf_asm_inst_pick(b, 0);
+            // If the expression is not used in an expression statement, we need the value, so
+            // duplicate it.
+            if (!dryad::node_has_kind<clauf::expr_stmt>(expr->parent()))
+            {
+                lauf_asm_inst_pick(b, 0);
+            }
 
             // Push the address of the lvalue onto the stack.
             // TODO: only identifier_expr is an lvalue at the moment
