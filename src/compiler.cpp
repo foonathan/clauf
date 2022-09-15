@@ -707,16 +707,18 @@ struct declarator : lexy::expression_production
 struct init_declarator
 {
     static constexpr auto rule
-        = dsl::p<declarator> + dsl::opt(dsl::equal_sign >> dsl::p<assignment_expr>);
-    static constexpr auto value = callback<clauf::init_declarator>(
-        [](compiler_state& state, clauf::declarator* decl, clauf::expr* expr) {
-            if (expr != nullptr && dryad::node_has_kind<clauf::function_declarator>(decl))
+        = dsl::p<declarator> + dsl::if_(dsl::position(dsl::equal_sign) >> dsl::p<assignment_expr>);
+    static constexpr auto value = callback<clauf::init_declarator>( //
+        [](compiler_state&, clauf::declarator* decl) {
+            return clauf::init_declarator{decl, nullptr};
+        },
+        [](compiler_state& state, clauf::declarator* decl, const char* pos, clauf::expr* expr) {
+            if (dryad::node_has_kind<clauf::function_declarator>(decl))
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error,
                          "function declarator cannot have initializer")
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(expr),
-                                "initialized here")
+                    .annotation(clauf::annotation_kind::primary, pos, "initialized here")
                     .finish();
             }
 
