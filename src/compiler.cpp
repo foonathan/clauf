@@ -72,6 +72,8 @@ struct scope
         global,
         // The local scope inside a function. Local scopes can be nested.
         local,
+        // The local scope of an if statement.
+        local_if,
         // The local scope of a loop; here break and continue is allowed.
         local_loop,
     } kind;
@@ -114,6 +116,13 @@ clauf::type* clone_type(compiler_state& state, const clauf::type* type)
 
 void insert_new_decl(compiler_state& state, clauf::decl* decl)
 {
+    if (state.current_scope->kind != scope::local && state.current_scope->kind != scope::global)
+    {
+        state.logger.log(clauf::diagnostic_kind::error, "declaration not allowed in this scope")
+            .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl), "here")
+            .finish();
+    }
+
     auto shadowed = state.current_scope->symbols.insert_or_shadow(decl->name(), decl);
     if (shadowed != nullptr)
     {
@@ -573,8 +582,8 @@ struct if_stmt
 {
     static constexpr auto rule
         = dsl::position(kw_if)
-          >> dsl::parenthesized(dsl::p<expr>) + dsl::p<secondary_block<scope::local>> //
-                 + dsl::if_(kw_else >> dsl::recurse<secondary_block<scope::local>>);
+          >> dsl::parenthesized(dsl::p<expr>) + dsl::p<secondary_block<scope::local_if>> //
+                 + dsl::if_(kw_else >> dsl::recurse<secondary_block<scope::local_if>>);
     static constexpr auto value = construct<clauf::if_stmt>;
 };
 
