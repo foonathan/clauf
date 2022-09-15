@@ -7,6 +7,7 @@
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
 #include <lexy/dsl.hpp>
+#include <vector>
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
@@ -21,8 +22,14 @@ enum class declarator_kind
     function,
 };
 
-using declarator      = dryad::node<declarator_kind>;
-using declarator_list = dryad::unlinked_node_list<declarator>;
+using declarator = dryad::node<declarator_kind>;
+
+struct init_declarator
+{
+    declarator* decl;
+    expr*       initializer; // can be null
+};
+using init_declarator_list = std::vector<init_declarator>;
 
 struct name
 {
@@ -697,53 +704,75 @@ struct declarator : lexy::expression_production
         });
 };
 
-struct declarator_list
+struct init_declarator
 {
-    static constexpr auto rule  = dsl::list(dsl::p<declarator>, dsl::sep(dsl::comma));
-    static constexpr auto value = lexy::as_list<clauf::declarator_list>;
+    static constexpr auto rule
+        = dsl::p<declarator> + dsl::opt(dsl::equal_sign >> dsl::p<assignment_expr>);
+    static constexpr auto value = callback<clauf::init_declarator>(
+        [](compiler_state& state, clauf::declarator* decl, clauf::expr* expr) {
+            if (expr != nullptr && dryad::node_has_kind<clauf::function_declarator>(decl))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "function declarator cannot have initializer")
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(expr),
+                                "initialized here")
+                    .finish();
+            }
+
+            return clauf::init_declarator{decl, expr};
+        });
+};
+
+struct init_declarator_list
+{
+    static constexpr auto rule  = dsl::list(dsl::p<init_declarator>, dsl::sep(dsl::comma));
+    static constexpr auto value = lexy::as_list<clauf::init_declarator_list>;
 };
 
 struct declaration
 {
-    static constexpr auto rule = dsl::p<type_specifier> >> dsl::p<declarator_list> + dsl::semicolon;
+    static constexpr auto rule
+        = dsl::p<type_specifier> >> dsl::p<init_declarator_list> + dsl::semicolon;
 
-    static constexpr auto value = callback<clauf::decl_list>([](compiler_state& state, clauf::type*,
-                                                                clauf::declarator_list decls) {
-        clauf::decl_list result;
-        for (auto decl : decls)
-        {
-            // TODO: we only have int as type, so just create a new int every time.
-            // TODO: verify and compute correct return type
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+    static constexpr auto value = callback<clauf::decl_list>(
+        [](compiler_state& state, clauf::type*, const clauf::init_declarator_list& decls) {
+            clauf::decl_list result;
+            for (auto [decl, init] : decls)
+            {
+                // TODO: we only have int as type, so just create a new int every time.
+                // TODO: verify and compute correct return type
+                auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
 
-            dryad::visit_node_all(
-                decl,
-                [&](clauf::name_declarator* name) {
-                    auto var = state.ast.create<clauf::variable_decl>(name->name.loc,
-                                                                      name->name.symbol, type);
-                    result.push_back(var);
-                },
-                [&](clauf::function_declarator* decl) {
-                    clauf::type_list parameter_types;
-                    for (auto param : decl->parameters)
-                    {
-                        // TODO: clone the type of param
-                        (void)param;
-                        auto type
-                            = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
-                        parameter_types.push_back(type);
-                    }
+                dryad::visit_node_all(
+                    decl,
+                    [&](clauf::name_declarator* name) {
+                        auto var = state.ast.create<clauf::variable_decl>(name->name.loc,
+                                                                          name->name.symbol, type);
+                        result.push_back(var);
+                    },
+                    [&](clauf::function_declarator* decl) {
+                        clauf::type_list parameter_types;
+                        for (auto param : decl->parameters)
+                        {
+                            // TODO: clone the type of param
+                            (void)param;
+                            auto type
+                                = state.ast.create<clauf::builtin_type>({},
+                                                                        clauf::builtin_type::int_);
+                            parameter_types.push_back(type);
+                        }
 
-                    auto name = get_name(decl);
-                    auto fn_type
-                        = state.ast.create<clauf::function_type>({}, type, parameter_types);
-                    auto fn = state.ast.create<clauf::function_decl>(name.loc, name.symbol, fn_type,
-                                                                     decl->parameters);
-                    result.push_back(fn);
-                });
-        }
-        return result;
-    });
+                        auto name = get_name(decl);
+                        auto fn_type
+                            = state.ast.create<clauf::function_type>({}, type, parameter_types);
+                        auto fn = state.ast.create<clauf::function_decl>(name.loc, name.symbol,
+                                                                         fn_type, decl->parameters);
+                        result.push_back(fn);
+                    });
+            }
+            return result;
+        });
 };
 
 struct global_declaration : lexy::scan_production<clauf::decl_list>
@@ -755,7 +784,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
         if (!type)
             return lexy::scan_failed;
 
-        auto decl_list = scanner.parse(grammar::declarator_list{});
+        auto decl_list = scanner.parse(grammar::init_declarator_list{});
         if (!decl_list)
             return lexy::scan_failed;
 
@@ -763,14 +792,14 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
         if (scanner.peek(dsl::lit_c<'{'>))
         {
             // We're having a function definition.
-            if (!decl_list.value().has_single_element())
+            if (decl_list.value().size() > 1)
             {
                 auto builder
                     = state.logger.log(clauf::diagnostic_kind::error,
                                        "multiple declarators not allowed in function definition");
 
                 auto first = true;
-                for (auto decl : decl_list.value())
+                for (auto [decl, init] : decl_list.value())
                 {
                     auto name = get_name(decl);
                     (void)builder.annotation(first ? clauf::annotation_kind::primary
@@ -782,7 +811,8 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
                 builder.finish();
             }
 
-            auto decl = dryad::node_cast<clauf::function_declarator>(decl_list.value().front());
+            auto decl
+                = dryad::node_cast<clauf::function_declarator>(decl_list.value().front().decl);
             auto name = get_name(decl);
 
             auto existing_decl = state.current_scope->symbols.lookup(name.symbol);
