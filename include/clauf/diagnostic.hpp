@@ -68,7 +68,8 @@ public:
         result._impl.write_path(lexy::cfile_output_iterator{stderr}, _file->path);
 
         va_end(args);
-        _errored = true;
+        if (kind == lexy_ext::diagnostic_kind::error)
+            _errored = true;
         return result;
     }
 
