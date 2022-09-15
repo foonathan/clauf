@@ -196,16 +196,15 @@ namespace clauf::grammar
 {
 namespace dsl = lexy::dsl;
 
-constexpr auto identifier
-    = dsl::identifier(dsl::unicode::xid_start_underscore, dsl::unicode::xid_continue);
+constexpr auto id = dsl::identifier(dsl::unicode::xid_start_underscore, dsl::unicode::xid_continue);
 
-constexpr auto kw_return   = LEXY_KEYWORD("return", identifier);
-constexpr auto kw_break    = LEXY_KEYWORD("break", identifier);
-constexpr auto kw_continue = LEXY_KEYWORD("continue", identifier);
-constexpr auto kw_if       = LEXY_KEYWORD("if", identifier);
-constexpr auto kw_else     = LEXY_KEYWORD("else", identifier);
-constexpr auto kw_while    = LEXY_KEYWORD("while", identifier);
-constexpr auto kw_do       = LEXY_KEYWORD("do", identifier);
+constexpr auto kw_return   = LEXY_KEYWORD("return", id);
+constexpr auto kw_break    = LEXY_KEYWORD("break", id);
+constexpr auto kw_continue = LEXY_KEYWORD("continue", id);
+constexpr auto kw_if       = LEXY_KEYWORD("if", id);
+constexpr auto kw_else     = LEXY_KEYWORD("else", id);
+constexpr auto kw_while    = LEXY_KEYWORD("while", id);
+constexpr auto kw_do       = LEXY_KEYWORD("do", id);
 
 constexpr auto kw_builtin_types
     = lexy::symbol_table<clauf::builtin_type::type_kind_t>.map(LEXY_LIT("int"),
@@ -214,18 +213,37 @@ constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builti
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_stmt::print)
                                       .map(LEXY_LIT("__clauf_assert"), clauf::builtin_stmt::assert);
 
-struct name
+template <bool AllowReserved>
+struct identifier
 {
+    static constexpr auto name = "identifier";
+
     static constexpr auto rule
-        = identifier.reserve(kw_return, kw_break, kw_continue, kw_if, kw_else, kw_while, kw_do,
-                             dsl::literal_set(kw_builtin_types),
-                             dsl::literal_set(kw_builtin_stmts));
+        = id.reserve(kw_return, kw_break, kw_continue, kw_if, kw_else, kw_while, kw_do,
+                     dsl::literal_set(kw_builtin_types), dsl::literal_set(kw_builtin_stmts));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
+
+        if constexpr (!AllowReserved)
+        {
+            auto symbol_str = std::string_view(symbol.c_str(state.ast.symbols));
+
+            if (symbol_str.find("__") != std::string_view::npos
+                || (symbol_str.size() >= 2 && symbol_str[0] == '_' && std::isupper(symbol_str[1]))
+                || (state.current_scope->kind == scope::global && symbol_str[0] == '_'))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::warning, "identifier '%s' is reserved",
+                         symbol_str.data())
+                    .annotation(clauf::annotation_kind::primary, {lexeme.begin(), lexeme.end()},
+                                "used as declaration name here")
+                    .finish();
+            }
+        }
+
         return clauf::name{{lexeme.begin(), lexeme.end()}, symbol};
     });
 };
-
 } // namespace clauf::grammar
 
 //=== type parsing ===//
@@ -269,7 +287,7 @@ struct integer_constant_expr
 
 struct identifier_expr
 {
-    static constexpr auto rule = dsl::p<name>;
+    static constexpr auto rule = dsl::p<identifier<true>>;
 
     static constexpr auto value
         = callback<clauf::identifier_expr*>([](compiler_state& state, clauf::name name) {
@@ -680,7 +698,7 @@ struct declarator : lexy::expression_production
     static constexpr auto name = Abstract ? "abstract_declarator" : "declarator";
 
     static constexpr auto atom = dsl::parenthesized(dsl::recurse<declarator<Abstract>>)
-                                 | dsl::p<grammar::name> | dsl::else_ >> dsl::position;
+                                 | dsl::p<grammar::identifier<false>> | dsl::else_ >> dsl::position;
 
     struct function_declarator : dsl::postfix_op
     {
