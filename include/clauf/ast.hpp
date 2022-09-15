@@ -532,9 +532,19 @@ private:
 class variable_decl : public dryad::basic_node<node_kind::variable_decl, decl>
 {
 public:
-    explicit variable_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type)
+    explicit variable_decl(dryad::node_ctor ctor, ast_symbol name, clauf::type* type,
+                           clauf::expr* initializer)
     : node_base(ctor, name, type)
-    {}
+    {
+        if (initializer != nullptr)
+            insert_child_after(this->type(), initializer);
+    }
+
+    bool has_initializer() const
+    {
+        return node_after(type()) != this;
+    }
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, type())
 };
 
 /// A parameter declaration.

@@ -746,9 +746,10 @@ struct declaration
 
                 dryad::visit_node_all(
                     decl,
-                    [&](clauf::name_declarator* name) {
-                        auto var = state.ast.create<clauf::variable_decl>(name->name.loc,
-                                                                          name->name.symbol, type);
+                    [&, init = init](clauf::name_declarator* name) {
+                        auto var
+                            = state.ast.create<clauf::variable_decl>(name->name.loc,
+                                                                     name->name.symbol, type, init);
                         result.push_back(var);
                     },
                     [&](clauf::function_declarator* decl) {
