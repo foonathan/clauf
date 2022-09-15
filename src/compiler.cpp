@@ -7,6 +7,7 @@
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
 #include <lexy/dsl.hpp>
+#include <string>
 #include <vector>
 
 #include <clauf/assert.hpp>
@@ -99,9 +100,19 @@ struct compiler_state
     scope  global_scope;
     scope* current_scope;
 
+    int symbol_generator_count;
+
     compiler_state(const clauf::file& input)
-    : logger(input), global_scope(scope::global, nullptr), current_scope(&global_scope)
+    : logger(input), global_scope(scope::global, nullptr), current_scope(&global_scope),
+      symbol_generator_count(0)
     {}
+
+    clauf::ast_symbol generate_symbol()
+    {
+        auto str = std::string("__clauf_anon_") + std::to_string(symbol_generator_count);
+        ++symbol_generator_count;
+        return ast.symbols.intern(str.c_str(), str.size());
+    }
 };
 
 clauf::type* clone_type(compiler_state& state, const clauf::type* type)
@@ -661,11 +672,50 @@ struct stmt
 //=== declaration ===//
 namespace clauf::grammar
 {
-struct declarator;
+struct parameter_list;
+
+template <bool Abstract = false>
+struct declarator : lexy::expression_production
+{
+    static constexpr auto name = Abstract ? "abstract_declarator" : "declarator";
+
+    static constexpr auto atom = dsl::parenthesized(dsl::recurse<declarator<Abstract>>)
+                                 | dsl::p<grammar::name> | dsl::else_ >> dsl::position;
+
+    struct function_declarator : dsl::postfix_op
+    {
+        static constexpr auto op = dsl::op<function_declarator>(
+            LEXY_LIT("(") >> dsl::position + dsl::recurse<parameter_list>);
+        using operand = dsl::atom;
+    };
+
+    using operation = function_declarator;
+
+    static constexpr auto value = callback<clauf::declarator*>( //
+        [](const compiler_state&, clauf::declarator* decl) { return decl; },
+        [](compiler_state& state, const char* pos) {
+            if (!Abstract)
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "declaration requires a name")
+                    .annotation(clauf::annotation_kind::primary, pos, "here")
+                    .finish();
+            }
+
+            return state.decl_tree.create<clauf::name_declarator>(
+                clauf::name{pos, state.generate_symbol()});
+        },
+        [](compiler_state& state, clauf::name name) {
+            return state.decl_tree.create<clauf::name_declarator>(name);
+        },
+        [](compiler_state& state, clauf::declarator* child, function_declarator,
+           clauf::location loc, clauf::parameter_list params) {
+            return state.decl_tree.create<clauf::function_declarator>(loc, child, params);
+        });
+};
 
 struct parameter_decl
 {
-    static constexpr auto rule  = dsl::p<type_specifier> + dsl::recurse<declarator>;
+    static constexpr auto rule  = dsl::p<type_specifier> + dsl::p<declarator<true>>;
     static constexpr auto value = callback<clauf::parameter_decl*>(
         [](compiler_state& state, clauf::type* type, clauf::declarator* decl) {
             auto name = get_name(decl);
@@ -680,34 +730,11 @@ struct parameter_list
     static constexpr auto value = lexy::as_list<clauf::parameter_list>;
 };
 
-struct declarator : lexy::expression_production
-{
-    static constexpr auto atom = dsl::p<name> | dsl::parenthesized(dsl::recurse<declarator>);
-
-    struct function_declarator : dsl::postfix_op
-    {
-        static constexpr auto op
-            = dsl::op<function_declarator>(LEXY_LIT("(") >> dsl::position + dsl::p<parameter_list>);
-        using operand = dsl::atom;
-    };
-
-    using operation = function_declarator;
-
-    static constexpr auto value = callback<clauf::declarator*>( //
-        [](const compiler_state&, clauf::declarator* decl) { return decl; },
-        [](compiler_state& state, clauf::name name) {
-            return state.decl_tree.create<clauf::name_declarator>(name);
-        },
-        [](compiler_state& state, clauf::declarator* child, function_declarator,
-           clauf::location loc, clauf::parameter_list params) {
-            return state.decl_tree.create<clauf::function_declarator>(loc, child, params);
-        });
-};
-
 struct init_declarator
 {
     static constexpr auto rule
-        = dsl::p<declarator> + dsl::if_(dsl::position(dsl::equal_sign) >> dsl::p<assignment_expr>);
+        = dsl::p<declarator<>> //
+          + dsl::if_(dsl::position(dsl::equal_sign) >> dsl::p<assignment_expr>);
     static constexpr auto value = callback<clauf::init_declarator>( //
         [](compiler_state&, clauf::declarator* decl) {
             return clauf::init_declarator{decl, nullptr};
