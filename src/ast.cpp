@@ -57,6 +57,27 @@ const char* to_string(clauf::node_kind kind)
         return "function decl";
     }
 }
+
+void dump_type(const clauf::type* ty)
+{
+    dryad::visit_tree(
+        ty,
+        [](const clauf::builtin_type* ty) {
+            switch (ty->type_kind())
+            {
+            case clauf::builtin_type::int_:
+                std::printf("int");
+                break;
+            }
+        },
+        [](dryad::child_visitor<clauf::type_node_kind> visitor, const clauf::function_type* ty) {
+            std::printf("(");
+            for (auto param : ty->parameters())
+                visitor(param);
+            std::printf(") -> ");
+            visitor(ty->return_type());
+        });
+}
 } // namespace
 
 void clauf::dump_ast(const ast& ast)
@@ -77,9 +98,13 @@ void clauf::dump_ast(const ast& ast)
         dryad::visit_node(
             node,
             //=== expr ===//
-            [&](const integer_constant_expr* expr) { std::printf("%ld", expr->value()); },
+            [&](const integer_constant_expr* expr) {
+                std::printf("%ld : ", expr->value());
+                dump_type(expr->type());
+            },
             [&](const identifier_expr* expr) {
-                std::printf("'%s'", expr->declaration()->name().c_str(ast.symbols));
+                std::printf("'%s' : ", expr->declaration()->name().c_str(ast.symbols));
+                dump_type(expr->type());
             },
             [&](const unary_expr* expr) {
                 switch (expr->op())
@@ -97,6 +122,8 @@ void clauf::dump_ast(const ast& ast)
                     std::printf("!");
                     break;
                 }
+                std::printf(" : ");
+                dump_type(expr->type());
             },
             [&](const arithmetic_expr* expr) {
                 switch (expr->op())
@@ -132,6 +159,8 @@ void clauf::dump_ast(const ast& ast)
                     std::printf(">>");
                     break;
                 }
+                std::printf(" : ");
+                dump_type(expr->type());
             },
             [&](const comparison_expr* expr) {
                 switch (expr->op())
@@ -155,6 +184,8 @@ void clauf::dump_ast(const ast& ast)
                     std::printf(">=");
                     break;
                 }
+                std::printf(" : ");
+                dump_type(expr->type());
             },
             [&](const sequenced_expr* expr) {
                 switch (expr->op())
@@ -169,6 +200,8 @@ void clauf::dump_ast(const ast& ast)
                     std::printf(",");
                     break;
                 }
+                std::printf(" : ");
+                dump_type(expr->type());
             },
             [&](const assignment_expr* expr) {
                 switch (expr->op())
@@ -208,6 +241,8 @@ void clauf::dump_ast(const ast& ast)
                     std::printf(">>=");
                     break;
                 }
+                std::printf(" : ");
+                dump_type(expr->type());
             },
             //=== stmt ===//
             [&](const builtin_stmt* stmt) {
@@ -233,7 +268,10 @@ void clauf::dump_ast(const ast& ast)
                 }
             },
             //=== decls ===//
-            [&](const decl* d) { std::printf("'%s'", d->name().c_str(ast.symbols)); });
+            [&](const decl* d) {
+                std::printf("'%s' : ", d->name().c_str(ast.symbols));
+                dump_type(d->type());
+            });
 
         std::putchar('\n');
         if (ev == dryad::traverse_event::enter)
