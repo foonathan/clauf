@@ -127,8 +127,6 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
     lauf_asm_block* block_loop_header = nullptr;
     dryad::visit_tree(
         decl->body(),
-        // We don't need to do any codegen for any types in the tree.
-        dryad::ignore_node<clauf::type>,
         //=== statements ===//
         [&, anchor = lexy::input_location_anchor(ctx.ast->input.buffer)] //
         (dryad::traverse_event_enter, const clauf::stmt* stmt) mutable {

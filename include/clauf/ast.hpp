@@ -13,18 +13,64 @@
 
 #include <clauf/assert.hpp>
 
+//=== types ===//
+namespace clauf
+{
+enum class type_node_kind
+{
+    builtin_type,
+    function_type,
+};
+
+/// The base class of all C types in the AST.
+using type      = dryad::node<type_node_kind>;
+using type_list = dryad::unlinked_node_list<type>;
+
+/// A builtin type like int.
+class builtin_type : public dryad::basic_node<type_node_kind::builtin_type, type>
+{
+public:
+    enum type_kind_t : std::uint16_t
+    {
+        int_,
+    };
+
+    explicit builtin_type(dryad::node_ctor ctor, type_kind_t kind) : node_base(ctor)
+    {
+        set_type_kind_impl(kind);
+    }
+
+    type_kind_t type_kind() const
+    {
+        return type_kind_impl();
+    }
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(type_kind_t, type_kind_impl);
+};
+
+/// A function type like int(void).
+class function_type
+: public dryad::basic_node<type_node_kind::function_type, dryad::container_node<type>>
+{
+public:
+    explicit function_type(dryad::node_ctor ctor, type* return_type, type_list parameters)
+    : node_base(ctor)
+    {
+        insert_child_after(nullptr, return_type);
+        insert_child_list_after(return_type, parameters);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
+    DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), this)
+};
+} // namespace clauf
+
 namespace clauf
 {
 enum class node_kind
 {
     translation_unit,
-
-    //=== types ===//
-    builtin_type,
-    function_type,
-
-    first_type = builtin_type,
-    last_type  = function_type,
 
     //=== expressions ===//
     integer_constant_expr,
@@ -75,57 +121,6 @@ class stmt;
 using stmt_list = dryad::unlinked_node_list<stmt>;
 } // namespace clauf
 
-//=== types ===//
-namespace clauf
-{
-/// The base class of all C types in the AST.
-struct type : dryad::abstract_node_range<node, node_kind::first_type, node_kind::last_type>
-{
-    DRYAD_ABSTRACT_NODE_CTOR(type)
-};
-
-using type_list = dryad::unlinked_node_list<type>;
-
-/// A builtin type like int.
-class builtin_type : public dryad::basic_node<node_kind::builtin_type, type>
-{
-public:
-    enum type_kind_t : std::uint16_t
-    {
-        int_,
-    };
-
-    explicit builtin_type(dryad::node_ctor ctor, type_kind_t kind) : node_base(ctor)
-    {
-        set_type_kind_impl(kind);
-    }
-
-    type_kind_t type_kind() const
-    {
-        return type_kind_impl();
-    }
-
-private:
-    DRYAD_ATTRIBUTE_USER_DATA16(type_kind_t, type_kind_impl);
-};
-
-/// A function type like int(void).
-class function_type
-: public dryad::basic_node<node_kind::function_type, dryad::container_node<type>>
-{
-public:
-    explicit function_type(dryad::node_ctor ctor, type* return_type, type_list parameters)
-    : node_base(ctor)
-    {
-        insert_child_after(nullptr, return_type);
-        insert_child_list_after(return_type, parameters);
-    }
-
-    DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
-    DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), this)
-};
-} // namespace clauf
-
 //=== expr ===//
 namespace clauf
 {
@@ -134,13 +129,18 @@ class expr : public dryad::abstract_node_range<dryad::container_node<node>, node
                                                node_kind::last_expr>
 {
 public:
-    DRYAD_CHILD_NODE_GETTER(clauf::type, type, nullptr)
+    const clauf::type* type() const
+    {
+        return _type;
+    }
 
 protected:
-    explicit expr(dryad::node_ctor ctor, node_kind kind, clauf::type* type) : node_base(ctor, kind)
-    {
-        insert_child_after(nullptr, type);
-    }
+    explicit expr(dryad::node_ctor ctor, node_kind kind, const clauf::type* type)
+    : node_base(ctor, kind), _type(type)
+    {}
+
+private:
+    const clauf::type* _type;
 };
 
 using expr_list = dryad::unlinked_node_list<expr>;
@@ -186,11 +186,11 @@ public:
                                 expr_list arguments)
     : node_base(ctor, type)
     {
-        insert_child_after(this->type(), fn);
+        insert_child_after(nullptr, fn);
         insert_child_list_after(this->function(), arguments);
     }
 
-    DRYAD_CHILD_NODE_GETTER(expr, function, type())
+    DRYAD_CHILD_NODE_GETTER(expr, function, nullptr)
     DRYAD_CHILD_NODE_RANGE_GETTER(expr, arguments, function(), this)
 };
 
@@ -210,7 +210,7 @@ public:
     : node_base(ctor, type)
     {
         set_op_impl(op);
-        insert_child_after(this->type(), child);
+        insert_child_after(nullptr, child);
     }
 
     unary_op op() const
@@ -218,7 +218,7 @@ public:
         return op_impl();
     }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, child, type())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, child, nullptr)
 
 private:
     DRYAD_ATTRIBUTE_USER_DATA16(unary_op, op_impl);
@@ -233,7 +233,7 @@ public:
     : dryad::basic_node<Kind, expr>(ctor, type)
     {
         this->user_data16() = std::uint16_t(op);
-        this->insert_children_after(this->type(), left, right);
+        this->insert_children_after(nullptr, left, right);
     }
 
     OpT op() const
@@ -241,7 +241,7 @@ public:
         return OpT(this->user_data16());
     }
 
-    DRYAD_CHILD_NODE_GETTER(expr, left, this->type())
+    DRYAD_CHILD_NODE_GETTER(expr, left, nullptr)
     DRYAD_CHILD_NODE_GETTER(expr, right, left())
 
 private:
@@ -316,10 +316,10 @@ public:
                               clauf::expr* if_true, clauf::expr* if_false)
     : node_base(ctor, type)
     {
-        insert_children_after(this->type(), condition, if_true, if_false);
+        insert_children_after(nullptr, condition, if_true, if_false);
     }
 
-    DRYAD_CHILD_NODE_GETTER(expr, condition, type())
+    DRYAD_CHILD_NODE_GETTER(expr, condition, nullptr)
     DRYAD_CHILD_NODE_GETTER(expr, if_true, condition())
     DRYAD_CHILD_NODE_GETTER(expr, if_false, if_true())
 };
@@ -515,17 +515,19 @@ public:
         _name = name;
     }
 
-    DRYAD_CHILD_NODE_GETTER(clauf::type, type, nullptr)
+    const clauf::type* type() const
+    {
+        return _type;
+    }
 
 protected:
     explicit decl(dryad::node_ctor ctor, node_kind kind, ast_symbol name, clauf::type* type)
-    : node_base(ctor, kind), _name(name)
-    {
-        insert_child_after(nullptr, type);
-    }
+    : node_base(ctor, kind), _name(name), _type(type)
+    {}
 
 private:
-    ast_symbol _name;
+    ast_symbol         _name;
+    const clauf::type* _type;
 };
 
 /// A variable declaration.
@@ -537,14 +539,14 @@ public:
     : node_base(ctor, name, type)
     {
         if (initializer != nullptr)
-            insert_child_after(this->type(), initializer);
+            insert_child_after(nullptr, initializer);
     }
 
     bool has_initializer() const
     {
-        return node_after(type()) != this;
+        return first_child() != nullptr;
     }
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, type())
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, nullptr)
 };
 
 /// A parameter declaration.
@@ -566,14 +568,14 @@ public:
                            parameter_list params)
     : node_base(ctor, name, type)
     {
-        insert_child_list_after(this->type(), params);
+        insert_child_list_after(nullptr, params);
         if (params.empty())
-            _last_param = this->type();
+            _last_param = nullptr;
         else
             _last_param = params.back();
     }
 
-    DRYAD_CHILD_NODE_RANGE_GETTER(parameter_decl, parameters, this->type(),
+    DRYAD_CHILD_NODE_RANGE_GETTER(parameter_decl, parameters, nullptr,
                                   this->node_after(_last_param))
     DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, _last_param)
 
@@ -631,6 +633,7 @@ struct ast
     file                                                       input;
     dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
     dryad::tree<translation_unit>                              tree;
+    dryad::forest<type>                                        types;
     dryad::node_map<node, location>                            locations;
 
     translation_unit* root()

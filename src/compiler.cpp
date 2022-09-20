@@ -120,15 +120,15 @@ clauf::type* clone_type(compiler_state& state, const clauf::type* type)
     return dryad::visit_node_all(
         type,
         [&](const clauf::builtin_type* type) -> clauf::type* {
-            return state.ast.create<clauf::builtin_type>({}, type->type_kind());
+            return state.ast.types.create<clauf::builtin_type>(type->type_kind());
         },
         [&](const clauf::function_type* type) -> clauf::type* {
             clauf::type_list param_types;
             for (auto param : type->parameters())
                 param_types.push_back(clone_type(state, param));
-            return state.ast.create<clauf::function_type>({},
-                                                          clone_type(state, type->return_type()),
-                                                          param_types);
+            return state.ast.types.create<clauf::function_type>(clone_type(state,
+                                                                           type->return_type()),
+                                                                param_types);
         });
 }
 
@@ -251,8 +251,11 @@ namespace clauf::grammar
 {
 struct builtin_type
 {
-    static constexpr auto rule  = dsl::position(dsl::symbol<kw_builtin_types>);
-    static constexpr auto value = construct<clauf::builtin_type>;
+    static constexpr auto rule  = dsl::symbol<kw_builtin_types>;
+    static constexpr auto value = callback<clauf::builtin_type*>(
+        [](compiler_state& state, clauf::builtin_type::type_kind_t kind) {
+            return state.ast.types.create<clauf::builtin_type>(kind);
+        });
 };
 
 using type_specifier = builtin_type;
@@ -280,7 +283,7 @@ struct integer_constant_expr
 
     static constexpr auto value = callback<clauf::integer_constant_expr*>(
         [](compiler_state& state, clauf::location loc, std::uint64_t value) {
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::integer_constant_expr>(loc, type, value);
         });
 };
@@ -483,37 +486,37 @@ struct assignment_expr : lexy::expression_production
                     .finish();
             }
 
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::function_call_expr>(op.loc, type, fn, arguments);
         },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::arithmetic_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::comparison_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
             // TODO: assert that left is an lvalue
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::assignment_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
            clauf::expr* if_false) {
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::conditional_expr>(op.loc, type, condition, if_true,
                                                              if_false);
         });
@@ -533,7 +536,7 @@ struct expr : lexy::expression_production
         [](const compiler_state&, clauf::expr* expr) { return expr; },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
-            auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
         });
 };
@@ -789,7 +792,7 @@ struct declaration
             {
                 // TODO: we only have int as type, so just create a new int every time.
                 // TODO: verify and compute correct return type
-                auto type = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+                auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
 
                 dryad::visit_node_all(
                     decl,
@@ -805,15 +808,14 @@ struct declaration
                         {
                             // TODO: clone the type of param
                             (void)param;
-                            auto type
-                                = state.ast.create<clauf::builtin_type>({},
-                                                                        clauf::builtin_type::int_);
+                            auto type = state.ast.types.create<clauf::builtin_type>(
+                                clauf::builtin_type::int_);
                             parameter_types.push_back(type);
                         }
 
                         auto name = get_name(decl);
                         auto fn_type
-                            = state.ast.create<clauf::function_type>({}, type, parameter_types);
+                            = state.ast.types.create<clauf::function_type>(type, parameter_types);
                         auto fn = state.ast.create<clauf::function_decl>(name.loc, name.symbol,
                                                                          fn_type, decl->parameters);
                         result.push_back(fn);
@@ -879,12 +881,12 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
                     // TODO: clone the type of param
                     (void)param;
                     auto type
-                        = state.ast.create<clauf::builtin_type>({}, clauf::builtin_type::int_);
+                        = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
                     parameter_types.push_back(type);
                 }
 
                 auto fn_type
-                    = state.ast.create<clauf::function_type>({}, type.value(), parameter_types);
+                    = state.ast.types.create<clauf::function_type>(type.value(), parameter_types);
                 fn_decl = state.ast.create<clauf::function_decl>(name.loc, name.symbol, fn_type,
                                                                  decl->parameters);
                 insert_new_decl(state, fn_decl);
