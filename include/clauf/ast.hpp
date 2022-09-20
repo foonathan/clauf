@@ -5,6 +5,7 @@
 #define CLAUF_AST_HPP_INCLUDED
 
 #include <dryad/abstract_node.hpp>
+#include <dryad/hash_forest.hpp>
 #include <dryad/node.hpp>
 #include <dryad/node_map.hpp>
 #include <dryad/symbol.hpp>
@@ -63,6 +64,36 @@ public:
 
     DRYAD_CHILD_NODE_GETTER(type, return_type, nullptr)
     DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), this)
+};
+
+struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, function_type>
+{
+    template <typename HashAlgorithm>
+    static void hash(HashAlgorithm& hasher, const builtin_type* n)
+    {
+        hasher.hash_scalar(n->type_kind());
+    }
+    template <typename HashAlgorithm>
+    static void hash(HashAlgorithm& hasher, builtin_type::type_kind_t kind)
+    {
+        hasher.hash_scalar(kind);
+    }
+    template <typename HashAlgorithm>
+    static void hash(HashAlgorithm&, const function_type*)
+    {}
+
+    static bool is_equal(const builtin_type* lhs, const builtin_type* rhs)
+    {
+        return lhs->type_kind() == rhs->type_kind();
+    }
+    static bool is_equal(const builtin_type* node, builtin_type::type_kind_t kind)
+    {
+        return node->type_kind() == kind;
+    }
+    static bool is_equal(const function_type*, const function_type*)
+    {
+        return true;
+    }
 };
 } // namespace clauf
 
@@ -148,7 +179,8 @@ using expr_list = dryad::unlinked_node_list<expr>;
 class integer_constant_expr : public dryad::basic_node<node_kind::integer_constant_expr, expr>
 {
 public:
-    explicit integer_constant_expr(dryad::node_ctor ctor, clauf::type* ty, std::uint64_t value)
+    explicit integer_constant_expr(dryad::node_ctor ctor, const clauf::type* ty,
+                                   std::uint64_t value)
     : node_base(ctor, ty), _value(value)
     {}
 
@@ -165,7 +197,7 @@ private:
 class identifier_expr : public dryad::basic_node<node_kind::identifier_expr, expr>
 {
 public:
-    explicit identifier_expr(dryad::node_ctor ctor, clauf::type* ty, clauf::decl* decl)
+    explicit identifier_expr(dryad::node_ctor ctor, const clauf::type* ty, clauf::decl* decl)
     : node_base(ctor, ty), _decl(decl)
     {}
 
@@ -182,7 +214,7 @@ private:
 class function_call_expr : public dryad::basic_node<node_kind::function_call_expr, expr>
 {
 public:
-    explicit function_call_expr(dryad::node_ctor ctor, clauf::type* type, clauf::expr* fn,
+    explicit function_call_expr(dryad::node_ctor ctor, const clauf::type* type, clauf::expr* fn,
                                 expr_list arguments)
     : node_base(ctor, type)
     {
@@ -206,7 +238,8 @@ enum class unary_op : std::uint16_t
 class unary_expr : public dryad::basic_node<node_kind::unary_expr, expr>
 {
 public:
-    explicit unary_expr(dryad::node_ctor ctor, clauf::type* type, unary_op op, clauf::expr* child)
+    explicit unary_expr(dryad::node_ctor ctor, const clauf::type* type, unary_op op,
+                        clauf::expr* child)
     : node_base(ctor, type)
     {
         set_op_impl(op);
@@ -228,7 +261,7 @@ template <node_kind Kind, typename OpT>
 class binary_expr : public dryad::basic_node<Kind, expr>
 {
 public:
-    explicit binary_expr(dryad::node_ctor ctor, clauf::type* type, OpT op, clauf::expr* left,
+    explicit binary_expr(dryad::node_ctor ctor, const clauf::type* type, OpT op, clauf::expr* left,
                          clauf::expr* right)
     : dryad::basic_node<Kind, expr>(ctor, type)
     {
@@ -312,8 +345,8 @@ using assignment_expr = binary_expr<node_kind::assignment_expr, assignment_op>;
 class conditional_expr : public dryad::basic_node<node_kind::conditional_expr, expr>
 {
 public:
-    explicit conditional_expr(dryad::node_ctor ctor, clauf::type* type, clauf::expr* condition,
-                              clauf::expr* if_true, clauf::expr* if_false)
+    explicit conditional_expr(dryad::node_ctor ctor, const clauf::type* type,
+                              clauf::expr* condition, clauf::expr* if_true, clauf::expr* if_false)
     : node_base(ctor, type)
     {
         insert_children_after(nullptr, condition, if_true, if_false);
@@ -633,7 +666,7 @@ struct ast
     file                                                       input;
     dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
     dryad::tree<translation_unit>                              tree;
-    dryad::forest<type>                                        types;
+    dryad::hash_forest<type, type_hasher>                      types;
     dryad::node_map<node, location>                            locations;
 
     translation_unit* root()
