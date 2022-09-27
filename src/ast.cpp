@@ -51,6 +51,20 @@ bool clauf::is_unsigned_int(const type* ty)
     else
         return false;
 }
+bool clauf::is_integer(const type* ty)
+{
+    return is_signed_int(ty) || is_unsigned_int(ty);
+}
+
+bool clauf::is_arithmetic(const type* ty)
+{
+    return is_integer(ty);
+}
+
+bool clauf::is_scalar(const type* ty)
+{
+    return clauf::is_arithmetic(ty);
+}
 
 bool clauf::is_complete_object_type(const type* ty)
 {

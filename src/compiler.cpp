@@ -3,6 +3,7 @@
 
 #include <clauf/compiler.hpp>
 
+#include <algorithm>
 #include <dryad/symbol_table.hpp>
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
@@ -407,15 +408,15 @@ struct assignment_expr : lexy::expression_production
                                                              clauf::type_list());
             }
 
-            auto param_count
-                = std::distance(fn_type->parameters().begin(), fn_type->parameters().end());
-            auto argument_count = std::distance(arguments.begin(), arguments.end());
-            if (param_count != argument_count)
+            if (!std::equal(fn_type->parameters().begin(), fn_type->parameters().end(),
+                            arguments.begin(), arguments.end(),
+                            [&](const clauf::type* param_type, const clauf::expr* argument) {
+                                // TODO: allow implicit conversion
+                                return clauf::is_same(param_type, argument->type());
+                            }))
             {
                 state.logger
-                    .log(clauf::diagnostic_kind::error,
-                         "invalid argument count %zu for function with %zu parameter(s)",
-                         argument_count, param_count)
+                    .log(clauf::diagnostic_kind::error, "mismatched parameter and argument type")
                     .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
                                 "call here")
                     .finish();
@@ -425,35 +426,144 @@ struct assignment_expr : lexy::expression_production
                                                                arguments);
         },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
-            // TODO: type check
-            return state.ast.create<clauf::unary_expr>(op.loc, child->type(), op, child);
+            auto is_valid_type = [&] {
+                switch (op)
+                {
+                case unary_op::plus:
+                case unary_op::neg:
+                    return clauf::is_arithmetic(child->type());
+                case unary_op::bnot:
+                    return clauf::is_integer(child->type());
+                case unary_op::lnot:
+                    return clauf::is_scalar(child->type());
+                }
+            }();
+            if (!is_valid_type)
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "invalid type for unary operator")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
+            // TODO: promote type
+            auto type = op == unary_op::lnot ? state.ast.create(clauf::builtin_type::sint64)
+                                             : child->type();
+            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
-            // TODO: type check + conversion
+            // TODO: conversion
+            if (!clauf::is_same(left->type(), right->type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "cannot do implicit conversion between operands")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
+            auto is_valid_type = [&] {
+                switch (op)
+                {
+                case clauf::arithmetic_op::add:
+                case clauf::arithmetic_op::sub:
+                case clauf::arithmetic_op::mul:
+                case clauf::arithmetic_op::div:
+                case clauf::arithmetic_op::rem:
+                    return clauf::is_arithmetic(left->type());
+                case clauf::arithmetic_op::band:
+                case clauf::arithmetic_op::bor:
+                case clauf::arithmetic_op::bxor:
+                case clauf::arithmetic_op::shl:
+                case clauf::arithmetic_op::shr:
+                    return clauf::is_integer(left->type());
+                }
+            }();
+            if (!is_valid_type)
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "invalid type for binary operator")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
             return state.ast.create<clauf::arithmetic_expr>(op.loc, left->type(), op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
-            // TODO: type check
+            // TODO: conversion
+            if (!clauf::is_same(left->type(), right->type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "cannot do implicit conversion between operands")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+            if (!clauf::is_arithmetic(left->type()))
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "invalid type for comparison")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
             auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);
             return state.ast.create<clauf::comparison_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
-            // TODO: type check
+            // TODO: conversion
+            if (!clauf::is_same(left->type(), right->type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "cannot do implicit conversion between operands")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+            if (!clauf::is_scalar(left->type()))
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "invalid type for logical operator")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
             auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);
             return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
             // TODO: assert that left is an lvalue
-            // TODO: type check and conversion
+            // TODO: conversion
+            if (!clauf::is_same(left->type(), right->type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "cannot do implicit conversion between operands")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+            // TODO: type check
             return state.ast.create<clauf::assignment_expr>(op.loc, left->type(), op, left, right);
         },
         [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
            clauf::expr* if_false) {
-            // TODO: type check and conversion
+            if (!clauf::is_scalar(condition->type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "invalid type for ternary condition")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
+            // TODO: conversion
+            if (!clauf::is_same(if_true->type(), if_false->type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "cannot do implicit conversion between operands")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
             return state.ast.create<clauf::conditional_expr>(op.loc, if_true->type(), condition,
                                                              if_true, if_false);
         });

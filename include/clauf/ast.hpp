@@ -116,6 +116,9 @@ bool is_same(const type* lhs, const type* rhs);
 bool is_void(const type* ty);
 bool is_signed_int(const type* ty);
 bool is_unsigned_int(const type* ty);
+bool is_integer(const type* ty);
+bool is_arithmetic(const type* ty);
+bool is_scalar(const type* ty);
 
 bool is_complete_object_type(const type* ty);
 } // namespace clauf
@@ -273,8 +276,8 @@ public:
 
 enum class unary_op : std::uint16_t
 {
-    plus,
-    neg,
+    plus, // +
+    neg,  // -
     bnot, // ~
     lnot, // !
 };
