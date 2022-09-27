@@ -5,6 +5,22 @@
 
 #include <cstdio>
 
+clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
+{
+    return dryad::visit_node_all(
+        ty,
+        [&](const clauf::builtin_type* ty) -> clauf::type* {
+            return creator.create<clauf::builtin_type>(ty->type_kind());
+        },
+        [&](const clauf::function_type* ty) -> clauf::type* {
+            clauf::type_list params;
+            for (auto param : ty->parameters())
+                params.push_back(clone(creator, param));
+
+            return creator.create<clauf::function_type>(clone(creator, ty->return_type()), params);
+        });
+}
+
 namespace
 {
 const char* to_string(clauf::node_kind kind)
