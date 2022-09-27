@@ -494,8 +494,24 @@ struct builtin_stmt
 
 struct return_stmt
 {
-    static constexpr auto rule  = dsl::position(kw_return) >> dsl::p<expr> + dsl::semicolon;
+    static constexpr auto rule = dsl::position(kw_return)
+                                 >> (dsl::semicolon | dsl::else_ >> dsl::p<expr> + dsl::semicolon);
     static constexpr auto value = callback<clauf::return_stmt*>(
+        [](compiler_state& state, const char* pos) {
+            if (!clauf::is_void(state.current_function->type()->return_type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "function with non-void return type must have a return value")
+                    .annotation(clauf::annotation_kind::secondary,
+                                state.ast.location_of(state.current_function),
+                                "return type declared here")
+                    .annotation(clauf::annotation_kind::primary, pos, "missing return value here")
+                    .finish();
+            }
+
+            return state.ast.create<clauf::return_stmt>(pos);
+        },
         [](compiler_state& state, const char* pos, clauf::expr* expr) {
             // TODO: support implicit conversions here
             if (!clauf::is_same(expr->type(), state.current_function->type()->return_type()))

@@ -457,6 +457,7 @@ private:
 class return_stmt : public dryad::basic_node<node_kind::return_stmt, stmt>
 {
 public:
+    explicit return_stmt(dryad::node_ctor ctor) : node_base(ctor) {}
     explicit return_stmt(dryad::node_ctor ctor, clauf::expr* expr) : node_base(ctor)
     {
         insert_child_after(nullptr, expr);
