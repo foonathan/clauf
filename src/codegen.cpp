@@ -47,24 +47,49 @@ struct context
 };
 
 template <typename Op>
-void call_arithmetic_builtin(lauf_asm_builder* b, Op op)
+void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const clauf::type* ty)
 {
     switch (op)
     {
     case Op::add:
-        lauf_asm_inst_call_builtin(b, lauf_lib_int_sadd(LAUF_LIB_INT_OVERFLOW_PANIC));
+        if (clauf::is_signed_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_sadd(LAUF_LIB_INT_OVERFLOW_PANIC));
+        else if (clauf::is_unsigned_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_uadd(LAUF_LIB_INT_OVERFLOW_PANIC));
+        else
+            CLAUF_UNREACHABLE("invalid type");
         break;
     case Op::sub:
-        lauf_asm_inst_call_builtin(b, lauf_lib_int_ssub(LAUF_LIB_INT_OVERFLOW_PANIC));
+        if (clauf::is_signed_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_ssub(LAUF_LIB_INT_OVERFLOW_PANIC));
+        else if (clauf::is_unsigned_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_usub(LAUF_LIB_INT_OVERFLOW_PANIC));
+        else
+            CLAUF_UNREACHABLE("invalid type");
         break;
     case Op::mul:
-        lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
+        if (clauf::is_signed_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
+        else if (clauf::is_unsigned_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_umul(LAUF_LIB_INT_OVERFLOW_PANIC));
+        else
+            CLAUF_UNREACHABLE("invalid type");
         break;
     case Op::div:
-        lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
+        if (clauf::is_signed_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
+        else if (clauf::is_unsigned_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_udiv);
+        else
+            CLAUF_UNREACHABLE("invalid type");
         break;
     case Op::rem:
-        lauf_asm_inst_call_builtin(b, lauf_lib_int_srem);
+        if (clauf::is_signed_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_srem);
+        else if (clauf::is_unsigned_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_urem);
+        else
+            CLAUF_UNREACHABLE("invalid type");
         break;
 
     case Op::band:
@@ -81,8 +106,13 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op)
         lauf_asm_inst_call_builtin(b, lauf_lib_bits_shl);
         break;
     case Op::shr:
-        // implementation-defined behavior: arithmetic right shift
-        lauf_asm_inst_call_builtin(b, lauf_lib_bits_sshr);
+        if (clauf::is_signed_int(ty))
+            // implementation-defined behavior: arithmetic right shift
+            lauf_asm_inst_call_builtin(b, lauf_lib_bits_sshr);
+        else if (clauf::is_unsigned_int(ty))
+            lauf_asm_inst_call_builtin(b, lauf_lib_bits_ushr);
+        else
+            CLAUF_UNREACHABLE("invalid type");
         break;
 
     default:
@@ -354,12 +384,17 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         },
         [&](dryad::traverse_event_exit, const clauf::arithmetic_expr* expr) {
             // At this point, two values have been pushed onto the stack.
-            call_arithmetic_builtin(b, expr->op());
+            call_arithmetic_builtin(b, expr->op(), expr->type());
         },
         [&](dryad::traverse_event_exit, const clauf::comparison_expr* expr) {
             // At this point, two values have been pushed onto the stack.
             // Compare them.
-            lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+            if (clauf::is_signed_int(expr->left()->type()))
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+            else if (clauf::is_unsigned_int(expr->left()->type()))
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_ucmp);
+            else
+                CLAUF_UNREACHABLE("invalid type");
 
             // And convert the three-way result into 0/1.
             switch (expr->op())
@@ -461,7 +496,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             {
                 visitor(expr->left());
                 visitor(expr->right());
-                call_arithmetic_builtin(b, expr->op());
+                call_arithmetic_builtin(b, expr->op(), expr->type());
             }
             else
             {

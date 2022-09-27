@@ -37,6 +37,21 @@ bool clauf::is_void(const type* ty)
         return false;
 }
 
+bool clauf::is_signed_int(const type* ty)
+{
+    if (auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty))
+        return builtin->type_kind() == clauf::builtin_type::sint64;
+    else
+        return false;
+}
+bool clauf::is_unsigned_int(const type* ty)
+{
+    if (auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty))
+        return builtin->type_kind() == clauf::builtin_type::uint64;
+    else
+        return false;
+}
+
 bool clauf::is_complete_object_type(const type* ty)
 {
     if (dryad::node_has_kind<clauf::function_type>(ty))
@@ -145,8 +160,11 @@ void dump_type(const clauf::type* ty)
             case clauf::builtin_type::void_:
                 std::printf("void");
                 break;
-            case clauf::builtin_type::int_:
-                std::printf("int");
+            case clauf::builtin_type::sint64:
+                std::printf("sint64");
+                break;
+            case clauf::builtin_type::uint64:
+                std::printf("uint64");
                 break;
             }
         },

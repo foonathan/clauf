@@ -7,6 +7,7 @@
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
 #include <lexy/dsl.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -134,9 +135,12 @@ constexpr auto kw_else     = LEXY_KEYWORD("else", id);
 constexpr auto kw_while    = LEXY_KEYWORD("while", id);
 constexpr auto kw_do       = LEXY_KEYWORD("do", id);
 
-constexpr auto kw_builtin_types = lexy::symbol_table<clauf::builtin_type::type_kind_t> //
-                                      .map(LEXY_LIT("void"), clauf::builtin_type::void_)
-                                      .map(LEXY_LIT("int"), clauf::builtin_type::int_);
+constexpr auto kw_type_specifiers
+    = lexy::symbol_table<clauf::type_specifier> //
+          .map(LEXY_LIT("void"), clauf::type_specifier::void_)
+          .map(LEXY_LIT("int"), clauf::type_specifier::int_)
+          .map(LEXY_LIT("signed"), clauf::type_specifier::signed_)
+          .map(LEXY_LIT("unsigned"), clauf::type_specifier::unsigned_);
 
 constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_stmt::print)
@@ -149,7 +153,7 @@ struct identifier
 
     static constexpr auto rule
         = id.reserve(kw_return, kw_break, kw_continue, kw_if, kw_else, kw_while, kw_do,
-                     dsl::literal_set(kw_builtin_types), dsl::literal_set(kw_builtin_stmts));
+                     dsl::literal_set(kw_type_specifiers), dsl::literal_set(kw_builtin_stmts));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
 
@@ -184,22 +188,36 @@ struct integer_constant_expr
     static constexpr auto integer
         = dsl::integer<std::uint64_t>(dsl::digits<Base>.sep(dsl::digit_sep_tick));
 
+    enum suffix
+    {
+        none,
+        unsigned_,
+    };
+
+    static constexpr auto suffixes
+        = lexy::symbol_table<suffix>.map<'u'>(suffix::unsigned_).map<'U'>(suffix::unsigned_);
+
     static constexpr auto rule = [] {
         auto decimal_digits = integer<dsl::decimal>;
         auto octal_digits   = integer<dsl::octal>;
         auto hex_digits     = (LEXY_LIT("0x") | LEXY_LIT("0X")) >> integer<dsl::hex>;
         auto binary_digits  = (LEXY_LIT("0b") | LEXY_LIT("0B")) >> integer<dsl::binary>;
 
+        auto opt_suffix = dsl::opt(dsl::symbol<suffixes>);
+
         return dsl::peek(dsl::lit_c<'0'>)
-                   >> dsl::position + (hex_digits | binary_digits | octal_digits)
-               | dsl::else_ >> dsl::position(decimal_digits);
+                   >> dsl::position + (hex_digits | binary_digits | octal_digits) + opt_suffix
+               | dsl::else_ >> dsl::position(decimal_digits) + opt_suffix;
     }();
 
-    static constexpr auto value = callback<clauf::integer_constant_expr*>(
-        [](compiler_state& state, clauf::location loc, std::uint64_t value) {
-            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::integer_constant_expr>(loc, type, value);
-        });
+    static constexpr auto value
+        = callback<clauf::integer_constant_expr*>([](compiler_state& state, clauf::location loc,
+                                                     std::uint64_t value, std::optional<suffix> s) {
+              auto type = s == suffix::unsigned_
+                              ? state.ast.create<clauf::builtin_type>(clauf::builtin_type::uint64)
+                              : state.ast.create<clauf::builtin_type>(clauf::builtin_type::sint64);
+              return state.ast.create<clauf::integer_constant_expr>(loc, type, value);
+          });
 };
 
 struct identifier_expr
@@ -385,7 +403,7 @@ struct assignment_expr : lexy::expression_production
 
                 fn_type
                     = state.ast.create<clauf::function_type>(state.ast.create<clauf::builtin_type>(
-                                                                 clauf::builtin_type::int_),
+                                                                 clauf::builtin_type::sint64),
                                                              clauf::type_list());
             }
 
@@ -418,13 +436,13 @@ struct assignment_expr : lexy::expression_production
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
             // TODO: type check
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);
             return state.ast.create<clauf::comparison_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
             // TODO: type check
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);
             return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
@@ -649,11 +667,70 @@ struct parameter_list;
 
 struct type_specifier
 {
-    static constexpr auto rule = dsl::symbol<kw_builtin_types>;
+    static constexpr auto rule = dsl::position(dsl::list(dsl::symbol<kw_type_specifiers>));
     static constexpr auto value
-        = callback<clauf::type*>([](compiler_state& state, clauf::builtin_type::type_kind_t kind) {
-              return state.ast.types.lookup_or_create<clauf::builtin_type>(kind);
-          });
+        = lexy::as_list<std::vector<clauf::type_specifier>> >> callback<clauf::type*>(
+              [](compiler_state& state, const char* pos,
+                 std::vector<clauf::type_specifier>&& specifiers) -> clauf::type* {
+                  std::optional<clauf::builtin_type::type_kind_t> base_type;
+                  std::optional<bool>                             is_signed;
+
+                  auto log_error = [&] {
+                      state.logger
+                          .log(clauf::diagnostic_kind::error,
+                               "invalid combination of type specifiers")
+                          .annotation(clauf::annotation_kind::primary, pos, "here")
+                          .finish();
+                  };
+
+                  for (auto specifier : specifiers)
+                      switch (specifier)
+                      {
+                      case clauf::type_specifier::void_:
+                          if (base_type.has_value())
+                              log_error();
+                          base_type = clauf::builtin_type::void_;
+                          break;
+                      case clauf::type_specifier::int_:
+                          if (base_type.has_value())
+                              log_error();
+                          base_type = clauf::builtin_type::sint64;
+                          break;
+
+                      case clauf::type_specifier::signed_:
+                          if (is_signed.has_value())
+                              log_error();
+                          if (base_type == clauf::builtin_type::void_)
+                              log_error();
+                          is_signed = true;
+                          break;
+                      case clauf::type_specifier::unsigned_:
+                          if (is_signed.has_value())
+                              log_error();
+                          if (base_type == clauf::builtin_type::void_)
+                              log_error();
+                          is_signed = false;
+                          break;
+                      }
+
+                  switch (base_type.value_or(clauf::builtin_type::sint64))
+                  {
+                  case builtin_type::void_:
+                      return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                          clauf::builtin_type::void_);
+                  case builtin_type::sint64:
+                      if (is_signed.value_or(true))
+                          return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                              clauf::builtin_type::sint64);
+                      else
+                          return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                              clauf::builtin_type::uint64);
+
+                  case builtin_type::uint64:
+                      CLAUF_UNREACHABLE("not a base type");
+                      return nullptr;
+                  }
+              });
 };
 
 template <bool Abstract = false>

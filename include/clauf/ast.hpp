@@ -27,6 +27,15 @@ enum class type_node_kind
 using type      = dryad::node<type_node_kind>;
 using type_list = dryad::unlinked_node_list<type>;
 
+enum class type_specifier
+{
+    void_,
+    int_,
+
+    signed_,
+    unsigned_,
+};
+
 /// A builtin type like int.
 class builtin_type : public dryad::basic_node<type_node_kind::builtin_type, type>
 {
@@ -34,7 +43,9 @@ public:
     enum type_kind_t : std::uint16_t
     {
         void_,
-        int_,
+
+        sint64,
+        uint64,
     };
 
     explicit builtin_type(dryad::node_ctor ctor, type_kind_t kind) : node_base(ctor)
@@ -103,6 +114,8 @@ type* clone(type_forest::node_creator creator, const type* ty);
 bool is_same(const type* lhs, const type* rhs);
 
 bool is_void(const type* ty);
+bool is_signed_int(const type* ty);
+bool is_unsigned_int(const type* ty);
 
 bool is_complete_object_type(const type* ty);
 } // namespace clauf
