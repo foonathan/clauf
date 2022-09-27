@@ -173,21 +173,6 @@ struct identifier
 };
 } // namespace clauf::grammar
 
-//=== type parsing ===//
-namespace clauf::grammar
-{
-struct builtin_type
-{
-    static constexpr auto rule = dsl::symbol<kw_builtin_types>;
-    static constexpr auto value
-        = callback<clauf::type*>([](compiler_state& state, clauf::builtin_type::type_kind_t kind) {
-              return state.ast.types.lookup_or_create<clauf::builtin_type>(kind);
-          });
-};
-
-using type_specifier = builtin_type;
-} // namespace clauf::grammar
-
 //=== expression parsing ===//
 namespace clauf::grammar
 {
@@ -210,7 +195,7 @@ struct integer_constant_expr
 
     static constexpr auto value = callback<clauf::integer_constant_expr*>(
         [](compiler_state& state, clauf::location loc, std::uint64_t value) {
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
+            auto type = state.ast.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::integer_constant_expr>(loc, type, value);
         });
 };
@@ -387,64 +372,70 @@ struct assignment_expr : lexy::expression_production
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
         [](compiler_state& state, clauf::expr* fn, op_tag<int> op, clauf::expr_list arguments) {
-            if (auto fn_type = dryad::node_try_cast<clauf::function_type>(fn->type()))
-            {
-                auto param_count
-                    = std::distance(fn_type->parameters().begin(), fn_type->parameters().end());
-                auto argument_count = std::distance(arguments.begin(), arguments.end());
-                if (param_count != argument_count)
-                {
-                    state.logger
-                        .log(clauf::diagnostic_kind::error,
-                             "invalid argument count %zu for function with %zu parameter(s)",
-                             argument_count, param_count)
-                        .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
-                                    "call here")
-                        .finish();
-                }
-            }
-            else
+            auto fn_type = dryad::node_try_cast<clauf::function_type>(fn->type());
+            if (fn_type == nullptr)
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error, "called expression is not a function")
                     .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
                                 "call here")
                     .finish();
+
+                fn_type
+                    = state.ast.create<clauf::function_type>(state.ast.create<clauf::builtin_type>(
+                                                                 clauf::builtin_type::int_),
+                                                             clauf::type_list());
             }
 
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::function_call_expr>(op.loc, type, fn, arguments);
+            auto param_count
+                = std::distance(fn_type->parameters().begin(), fn_type->parameters().end());
+            auto argument_count = std::distance(arguments.begin(), arguments.end());
+            if (param_count != argument_count)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "invalid argument count %zu for function with %zu parameter(s)",
+                         argument_count, param_count)
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
+                                "call here")
+                    .finish();
+            }
+
+            return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
+                                                               arguments);
         },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+            // TODO: type check
+            return state.ast.create<clauf::unary_expr>(op.loc, child->type(), op, child);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::arithmetic_expr>(op.loc, type, op, left, right);
+            // TODO: type check + conversion
+            return state.ast.create<clauf::arithmetic_expr>(op.loc, left->type(), op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
+            // TODO: type check
             auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::comparison_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
+            // TODO: type check
             auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
             return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
             // TODO: assert that left is an lvalue
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::assignment_expr>(op.loc, type, op, left, right);
+            // TODO: type check and conversion
+            return state.ast.create<clauf::assignment_expr>(op.loc, left->type(), op, left, right);
         },
         [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
            clauf::expr* if_false) {
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::conditional_expr>(op.loc, type, condition, if_true,
-                                                             if_false);
+            // TODO: type check and conversion
+            return state.ast.create<clauf::conditional_expr>(op.loc, if_true->type(), condition,
+                                                             if_true, if_false);
         });
 };
 
@@ -462,8 +453,8 @@ struct expr : lexy::expression_production
         [](const compiler_state&, clauf::expr* expr) { return expr; },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::int_);
-            return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
+            // The type of the comma operator is the type of the right expression.
+            return state.ast.create<clauf::sequenced_expr>(op.loc, right->type(), op, left, right);
         });
 };
 } // namespace clauf::grammar
@@ -620,6 +611,15 @@ struct stmt
 namespace clauf::grammar
 {
 struct parameter_list;
+
+struct type_specifier
+{
+    static constexpr auto rule = dsl::symbol<kw_builtin_types>;
+    static constexpr auto value
+        = callback<clauf::type*>([](compiler_state& state, clauf::builtin_type::type_kind_t kind) {
+              return state.ast.types.lookup_or_create<clauf::builtin_type>(kind);
+          });
+};
 
 template <bool Abstract = false>
 struct declarator : lexy::expression_production

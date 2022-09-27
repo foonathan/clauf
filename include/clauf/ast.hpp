@@ -765,11 +765,20 @@ struct ast
     }
 
     template <typename T, typename... Args>
-    T* create(location loc, Args&&... args)
+    auto create(location loc, Args&&... args) -> std::enable_if_t<dryad::is_node<T, node_kind>, T*>
     {
         auto node = tree.template create<T>(DRYAD_FWD(args)...);
         locations.insert(node, loc);
         return node;
+    }
+    template <typename T, typename... Args>
+    auto create(Args&&... args) -> std::enable_if_t<dryad::is_node<T, type_node_kind>, T*>
+    {
+        return dryad::node_cast<T>(types.template create<T>(DRYAD_FWD(args)...));
+    }
+    builtin_type* create(builtin_type::type_kind_t kind)
+    {
+        return dryad::node_cast<builtin_type>(types.lookup_or_create<builtin_type>(kind));
     }
 
     location location_of(const node* n) const
