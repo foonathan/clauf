@@ -21,6 +21,43 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
         });
 }
 
+clauf::name clauf::get_name(const declarator* decl)
+{
+    return dryad::visit_node_all(
+        decl, [](const name_declarator* decl) { return decl->name(); },
+        [](const function_declarator* decl) { return get_name(decl->child()); },
+        [](const init_declarator* decl) { return get_name(decl->child()); });
+}
+
+clauf::expr* clauf::get_init(const declarator* decl)
+{
+    if (auto init = dryad::node_try_cast<clauf::init_declarator>(decl))
+        return init->initializer();
+    else
+        return nullptr;
+}
+
+const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
+                                   const type* decl_type)
+{
+    return dryad::visit_node_all(
+        decl, //
+        [&](const clauf::name_declarator*) { return decl_type; },
+        [&](const clauf::function_declarator* decl) {
+            return types.build([&](clauf::type_forest::node_creator creator) {
+                clauf::type_list parameter_types;
+                for (auto param : decl->parameters())
+                    parameter_types.push_back(clauf::clone(creator, param->type()));
+
+                auto return_type = clauf::clone(creator, decl_type);
+                return creator.create<clauf::function_type>(return_type, parameter_types);
+            });
+        },
+        [&](const clauf::init_declarator* decl) {
+            return get_type(types, decl->child(), decl_type);
+        });
+}
+
 namespace
 {
 const char* to_string(clauf::node_kind kind)

@@ -11,7 +11,6 @@
 #include <dryad/symbol.hpp>
 #include <dryad/tree.hpp>
 #include <lexy/input/buffer.hpp>
-#include <vector>
 
 #include <clauf/assert.hpp>
 
@@ -169,6 +168,12 @@ struct location
     {
         return begin != nullptr && end != nullptr;
     }
+};
+
+struct name
+{
+    location   loc;
+    ast_symbol symbol;
 };
 } // namespace clauf
 
@@ -649,70 +654,74 @@ enum class declarator_kind
 {
     name,
     function,
+
+    init,
 };
 
-using declarator = dryad::node<declarator_kind>;
+using declarator      = dryad::node<declarator_kind>;
+using declarator_list = dryad::unlinked_node_list<declarator>;
 
-struct init_declarator
+class name_declarator : public dryad::basic_node<declarator_kind::name>
 {
-    declarator* decl;
-    expr*       initializer; // can be null
-};
-using init_declarator_list = std::vector<init_declarator>;
-
-struct name
-{
-    location   loc;
-    ast_symbol symbol;
-};
-
-struct name_declarator : dryad::basic_node<declarator_kind::name>
-{
-    clauf::name name;
-
-    explicit name_declarator(dryad::node_ctor ctor, clauf::name name) : node_base(ctor), name(name)
+public:
+    explicit name_declarator(dryad::node_ctor ctor, clauf::name name) : node_base(ctor), _name(name)
     {}
+
+    clauf::name name() const
+    {
+        return _name;
+    }
+
+private:
+    clauf::name _name;
 };
 
-struct function_declarator
-: dryad::basic_node<declarator_kind::function, dryad::container_node<declarator>>
+class function_declarator
+: public dryad::basic_node<declarator_kind::function, dryad::container_node<declarator>>
 {
-    location       loc;
-    parameter_list parameters;
-
-    explicit function_declarator(dryad::node_ctor ctor, location loc, declarator* child,
+public:
+    explicit function_declarator(dryad::node_ctor ctor, declarator* child,
                                  parameter_list parameters)
-    : node_base(ctor), loc(loc), parameters(parameters)
+    : node_base(ctor), _parameters(parameters)
     {
         insert_child_after(nullptr, child);
     }
 
     DRYAD_CHILD_NODE_GETTER(declarator, child, nullptr)
+
+    parameter_list parameters() const
+    {
+        return _parameters;
+    }
+
+private:
+    parameter_list _parameters;
 };
 
-inline name get_name(const declarator* decl)
+class init_declarator
+: public dryad::basic_node<declarator_kind::init, dryad::container_node<declarator>>
 {
-    return dryad::visit_node_all(
-        decl, [](const name_declarator* decl) { return decl->name; },
-        [](const function_declarator* decl) { return get_name(decl->child()); });
-}
+public:
+    explicit init_declarator(dryad::node_ctor ctor, declarator* child, expr* initializer)
+    : node_base(ctor), _init(initializer)
+    {
+        insert_child_after(nullptr, child);
+    }
 
-inline const type* get_type(type_forest& types, const declarator* decl, const type* decl_type)
-{
-    return dryad::visit_node_all(
-        decl, //
-        [&](const clauf::name_declarator*) { return decl_type; },
-        [&](const clauf::function_declarator* decl) {
-            return types.build([&](clauf::type_forest::node_creator creator) {
-                clauf::type_list parameter_types;
-                for (auto param : decl->parameters)
-                    parameter_types.push_back(clauf::clone(creator, param->type()));
+    DRYAD_CHILD_NODE_GETTER(declarator, child, nullptr)
 
-                auto return_type = clauf::clone(creator, decl_type);
-                return creator.create<clauf::function_type>(return_type, parameter_types);
-            });
-        });
-}
+    expr* initializer() const
+    {
+        return _init;
+    }
+
+private:
+    expr* _init;
+};
+
+name        get_name(const declarator* decl);
+expr*       get_init(const declarator* decl);
+const type* get_type(type_forest& types, const declarator* decl, const type* decl_type);
 } // namespace clauf
 
 //=== translation_unit ===//
