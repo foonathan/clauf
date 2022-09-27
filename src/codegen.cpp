@@ -335,11 +335,15 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
                 break;
             case clauf::unary_op::bnot:
-                lauf_asm_inst_call_builtin(b, lauf_lib_bits_not);
+                // NOT is XOR with -1 (all bits set)
+                lauf_asm_inst_sint(b, -1);
+                lauf_asm_inst_call_builtin(b, lauf_lib_bits_xor);
                 break;
             case clauf::unary_op::lnot:
                 // If any bit is set, produce 0, otherwise, produce 1.
-                lauf_asm_inst_call_builtin(b, lauf_lib_bits_none_set);
+                lauf_asm_inst_uint(b, 0);
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_ucmp);
+                lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_EQ);
                 break;
             }
         },
