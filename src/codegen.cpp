@@ -98,8 +98,12 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         params.push_back(param);
     auto parameter_count = params.size();
 
+    auto return_count = clauf::is_void(decl->type()->return_type()) ? 0 : 1;
+
     auto name = decl->name().c_str(ctx.ast->symbols);
-    auto fn = lauf_asm_add_function(ctx.mod, name, {static_cast<std::uint8_t>(parameter_count), 1});
+    auto fn   = lauf_asm_add_function(ctx.mod, name,
+                                      {static_cast<std::uint8_t>(parameter_count),
+                                       static_cast<std::uint8_t>(return_count)});
     ctx.functions.insert(decl, fn);
 
     dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
@@ -310,18 +314,19 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::function_call_expr* expr) {
             // Push each argument onto the stack.
-            auto argument_count = 0u;
             for (auto argument : expr->arguments())
-            {
                 visitor(argument);
-                ++argument_count;
-            }
 
             // Push the address of the function onto the stack.
             visitor(expr->function());
 
             // Call the function.
-            lauf_asm_inst_call_indirect(b, {std::uint8_t(argument_count), 1});
+            auto type = dryad::node_cast<clauf::function_type>(expr->function()->type());
+            auto argument_count
+                = std::distance(type->parameters().begin(), type->parameters().end());
+            auto return_count = clauf::is_void(type->return_type()) ? 0 : 1;
+            lauf_asm_inst_call_indirect(b,
+                                        {std::uint8_t(argument_count), std::uint8_t(return_count)});
         },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
             // At this point, one value has been pushed onto the stack.
@@ -535,9 +540,10 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             lauf_asm_build_block(b, block_end);
         });
 
-    // Add an implicit return 0.
     lauf_asm_build_debug_location(b, {0, 0, true});
-    lauf_asm_inst_uint(b, 0);
+    if (return_count > 0)
+        // Add an implicit return 0.
+        lauf_asm_inst_uint(b, 0);
     lauf_asm_inst_return(b);
 
     lauf_asm_build_finish(b);

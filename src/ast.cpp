@@ -21,6 +21,30 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
         });
 }
 
+bool clauf::is_same(const type* lhs, const type* rhs)
+{
+    if (lhs == rhs)
+        return true;
+
+    return type_hasher::is_equal_base(lhs, rhs);
+}
+
+bool clauf::is_void(const type* ty)
+{
+    if (auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty))
+        return builtin->type_kind() == clauf::builtin_type::void_;
+    else
+        return false;
+}
+
+bool clauf::is_complete_object_type(const type* ty)
+{
+    if (dryad::node_has_kind<clauf::function_type>(ty))
+        return false;
+
+    return !clauf::is_void(ty);
+}
+
 clauf::name clauf::get_name(const declarator* decl)
 {
     return dryad::visit_node_all(
@@ -118,6 +142,9 @@ void dump_type(const clauf::type* ty)
         [](const clauf::builtin_type* ty) {
             switch (ty->type_kind())
             {
+            case clauf::builtin_type::void_:
+                std::printf("void");
+                break;
             case clauf::builtin_type::int_:
                 std::printf("int");
                 break;

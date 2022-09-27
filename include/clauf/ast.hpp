@@ -33,6 +33,7 @@ class builtin_type : public dryad::basic_node<type_node_kind::builtin_type, type
 public:
     enum type_kind_t : std::uint16_t
     {
+        void_,
         int_,
     };
 
@@ -98,6 +99,12 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, function
 using type_forest = dryad::hash_forest<type, type_hasher>;
 
 type* clone(type_forest::node_creator creator, const type* ty);
+
+bool is_same(const type* lhs, const type* rhs);
+
+bool is_void(const type* ty);
+
+bool is_complete_object_type(const type* ty);
 } // namespace clauf
 
 namespace clauf
@@ -636,6 +643,11 @@ public:
     DRYAD_CHILD_NODE_RANGE_GETTER(parameter_decl, parameters, nullptr,
                                   this->node_after(_last_param))
     DRYAD_CHILD_NODE_GETTER(clauf::block_stmt, body, _last_param)
+
+    const clauf::function_type* type() const
+    {
+        return dryad::node_cast<clauf::function_type>(decl::type());
+    }
 
     void set_body(clauf::block_stmt* block)
     {

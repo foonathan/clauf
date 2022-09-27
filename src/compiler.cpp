@@ -41,8 +41,9 @@ struct compiler_state
     clauf::ast                     ast;
     dryad::tree<clauf::declarator> decl_tree;
 
-    scope  global_scope;
-    scope* current_scope;
+    scope                 global_scope;
+    scope*                current_scope;
+    clauf::function_decl* current_function = nullptr;
 
     int symbol_generator_count;
 
@@ -133,9 +134,10 @@ constexpr auto kw_else     = LEXY_KEYWORD("else", id);
 constexpr auto kw_while    = LEXY_KEYWORD("while", id);
 constexpr auto kw_do       = LEXY_KEYWORD("do", id);
 
-constexpr auto kw_builtin_types
-    = lexy::symbol_table<clauf::builtin_type::type_kind_t>.map(LEXY_LIT("int"),
-                                                               clauf::builtin_type::int_);
+constexpr auto kw_builtin_types = lexy::symbol_table<clauf::builtin_type::type_kind_t> //
+                                      .map(LEXY_LIT("void"), clauf::builtin_type::void_)
+                                      .map(LEXY_LIT("int"), clauf::builtin_type::int_);
+
 constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_stmt::print)
                                       .map(LEXY_LIT("__clauf_assert"), clauf::builtin_stmt::assert);
@@ -493,7 +495,24 @@ struct builtin_stmt
 struct return_stmt
 {
     static constexpr auto rule  = dsl::position(kw_return) >> dsl::p<expr> + dsl::semicolon;
-    static constexpr auto value = construct<clauf::return_stmt>;
+    static constexpr auto value = callback<clauf::return_stmt*>(
+        [](compiler_state& state, const char* pos, clauf::expr* expr) {
+            // TODO: support implicit conversions here
+            if (!clauf::is_same(expr->type(), state.current_function->type()->return_type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "incompatible type of returned expression and return type of function")
+                    .annotation(clauf::annotation_kind::secondary,
+                                state.ast.location_of(state.current_function),
+                                "return type declared here")
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(expr),
+                                "expression returned here")
+                    .finish();
+            }
+
+            return state.ast.create<clauf::return_stmt>(pos, expr);
+        });
 };
 
 struct break_stmt
@@ -666,6 +685,14 @@ struct parameter_decl
     static constexpr auto value = callback<clauf::parameter_decl*>(
         [](compiler_state& state, clauf::type* type, clauf::declarator* decl) {
             auto name = get_name(decl);
+            if (!clauf::is_complete_object_type(type))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
+                    .annotation(clauf::annotation_kind::primary, name.loc,
+                                "used to declare parameter here")
+                    .finish();
+            }
             return state.ast.create<clauf::parameter_decl>(name.loc, name.symbol, type);
         });
 };
@@ -708,6 +735,16 @@ struct declaration
                 result.push_back(dryad::visit_node_all(
                     decl,
                     [&](const clauf::name_declarator*) -> clauf::decl* {
+                        if (!clauf::is_complete_object_type(type))
+                        {
+                            state.logger
+                                .log(clauf::diagnostic_kind::error,
+                                     "invalid use of incomplete object type")
+                                .annotation(clauf::annotation_kind::primary, name.loc,
+                                            "used to declare variable here")
+                                .finish();
+                        }
+
                         return state.ast.create<clauf::variable_decl>(name.loc, name.symbol, type,
                                                                       get_init(decl));
                     },
@@ -783,6 +820,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
                 insert_new_decl(state, fn_decl);
             }
 
+            state.current_function = fn_decl;
             scope local_scope(scope::local, state.current_scope);
             state.current_scope = &local_scope;
             for (auto param : fn_decl->parameters())
@@ -793,7 +831,8 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
                 return lexy::scan_failed;
             fn_decl->set_body(body.value());
 
-            state.current_scope = state.current_scope->parent;
+            state.current_scope    = state.current_scope->parent;
+            state.current_function = nullptr;
             return fn_decl->is_linked_in_tree() ? nullptr : fn_decl;
         }
         else
