@@ -133,6 +133,7 @@ enum class node_kind
     integer_constant_expr,
     identifier_expr,
     function_call_expr,
+    cast_expr,
     unary_expr,
     arithmetic_expr,
     comparison_expr,
@@ -272,6 +273,19 @@ public:
 
     DRYAD_CHILD_NODE_GETTER(expr, function, nullptr)
     DRYAD_CHILD_NODE_RANGE_GETTER(expr, arguments, function(), this)
+};
+
+/// A cast expression or implicit conversion.
+class cast_expr : public dryad::basic_node<node_kind::cast_expr, expr>
+{
+public:
+    explicit cast_expr(dryad::node_ctor ctor, const clauf::type* target_type, clauf::expr* child)
+    : node_base(ctor, target_type)
+    {
+        insert_child_after(nullptr, child);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(expr, child, nullptr)
 };
 
 enum class unary_op : std::uint16_t

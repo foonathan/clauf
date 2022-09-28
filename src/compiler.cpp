@@ -274,12 +274,19 @@ constexpr auto op_(Rule rule)
 
 struct expr;
 struct assignment_expr;
+struct type_specifier_list;
 
 struct argument_list
 {
     static constexpr auto rule = dsl::terminator(LEXY_LIT(")"))
                                      .opt_list(dsl::recurse<assignment_expr>, dsl::sep(dsl::comma));
     static constexpr auto value = lexy::as_list<clauf::expr_list>;
+};
+
+struct type_name
+{
+    static constexpr auto rule  = dsl::recurse<type_specifier_list>;
+    static constexpr auto value = lexy::forward<clauf::type*>;
 };
 
 struct assignment_expr : lexy::expression_production
@@ -303,12 +310,18 @@ struct assignment_expr : lexy::expression_production
         using operand = postfix;
     };
 
+    struct cast : dsl::prefix_op
+    {
+        static constexpr auto op = op_<0>(dsl::parenthesized(dsl::p<type_name>));
+        using operand            = unary;
+    };
+
     struct multiplicative : dsl::infix_op_left
     {
         static constexpr auto op = op_<clauf::arithmetic_op::mul>(LEXY_LIT("*"))
                                    / op_<clauf::arithmetic_op::div>(LEXY_LIT("/"))
                                    / op_<clauf::arithmetic_op::rem>(LEXY_LIT("%"));
-        using operand = unary;
+        using operand = cast;
     };
 
     struct additive : dsl::infix_op_left
@@ -424,6 +437,36 @@ struct assignment_expr : lexy::expression_production
 
             return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
                                                                arguments);
+        },
+        [](compiler_state& state, op_tag<int> op, const clauf::type* target_type,
+           clauf::expr* child) -> clauf::expr* {
+            // Check that the target type is valid.
+            if (!clauf::is_scalar(target_type) && !clauf::is_void(target_type))
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "invalid target type for cast")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "cast here")
+                    .finish();
+            }
+
+            // Check that we can convert the source type to target type.
+            if (clauf::is_void(target_type))
+            {
+                // All source types allowed.
+            }
+            else if (clauf::is_arithmetic(target_type))
+            {
+                if (!clauf::is_arithmetic(child->type()))
+                {
+                    state.logger.log(clauf::diagnostic_kind::error, "invalid source type for cast")
+                        .annotation(clauf::annotation_kind::primary, op.loc, "cast here")
+                        .finish();
+                }
+            }
+
+            if (clauf::is_same(target_type, child->type()))
+                return child;
+            else
+                return state.ast.create<clauf::cast_expr>(op.loc, target_type, child);
         },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
             auto is_valid_type = [&] {
@@ -775,7 +818,7 @@ namespace clauf::grammar
 {
 struct parameter_list;
 
-struct type_specifier
+struct type_specifier_list
 {
     static constexpr auto rule = dsl::position(dsl::list(dsl::symbol<kw_type_specifiers>));
     static constexpr auto value
@@ -884,7 +927,7 @@ struct declarator : lexy::expression_production
 
 struct parameter_decl
 {
-    static constexpr auto rule  = dsl::p<type_specifier> + dsl::p<declarator<true>>;
+    static constexpr auto rule  = dsl::p<type_specifier_list> + dsl::p<declarator<true>>;
     static constexpr auto value = callback<clauf::parameter_decl*>(
         [](compiler_state& state, clauf::type* type, clauf::declarator* decl) {
             auto name = get_name(decl);
@@ -925,7 +968,7 @@ struct init_declarator_list
 struct declaration
 {
     static constexpr auto rule
-        = dsl::p<type_specifier> >> dsl::p<init_declarator_list> + dsl::semicolon;
+        = dsl::p<type_specifier_list> >> dsl::p<init_declarator_list> + dsl::semicolon;
 
     static clauf::decl* create_non_init_declaration(compiler_state& state, clauf::type* decl_type,
                                                     const clauf::declarator* declarator)
@@ -980,7 +1023,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
     template <typename Context, typename Reader>
     static scan_result scan(lexy::rule_scanner<Context, Reader>& scanner, compiler_state& state)
     {
-        auto decl_type = scanner.parse(grammar::type_specifier{});
+        auto decl_type = scanner.parse(grammar::type_specifier_list{});
         if (!decl_type)
             return lexy::scan_failed;
 

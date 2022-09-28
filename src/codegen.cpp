@@ -358,6 +358,28 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             lauf_asm_inst_call_indirect(b,
                                         {std::uint8_t(argument_count), std::uint8_t(return_count)});
         },
+        [&](dryad::traverse_event_exit, const clauf::cast_expr* expr) {
+            // At this point, the value to be casted is on top of the stack.
+            if (clauf::is_void(expr->type()))
+            {
+                // Discard the value.
+                lauf_asm_inst_pop(b, 0);
+            }
+            else if (clauf::is_unsigned_int(expr->type()))
+            {
+                CLAUF_PRECONDITION(clauf::is_signed_int(expr->child()->type()));
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_stou(LAUF_LIB_INT_OVERFLOW_WRAP));
+            }
+            else if (clauf::is_signed_int(expr->type()))
+            {
+                CLAUF_PRECONDITION(clauf::is_unsigned_int(expr->child()->type()));
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_utos(LAUF_LIB_INT_OVERFLOW_PANIC));
+            }
+            else
+            {
+                CLAUF_UNREACHABLE("no other conversion is allowed");
+            }
+        },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
             // At this point, one value has been pushed onto the stack.
             switch (expr->op())

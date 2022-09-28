@@ -125,6 +125,8 @@ const char* to_string(clauf::node_kind kind)
         return "identifier expr";
     case clauf::node_kind::function_call_expr:
         return "function call expr";
+    case clauf::node_kind::cast_expr:
+        return "cast expr";
     case clauf::node_kind::unary_expr:
         return "unary expr";
     case clauf::node_kind::arithmetic_expr:
@@ -218,6 +220,7 @@ void clauf::dump_ast(const ast& ast)
                 std::printf("'%s' : ", expr->declaration()->name().c_str(ast.symbols));
                 dump_type(expr->type());
             },
+            [&](const cast_expr* expr) { dump_type(expr->type()); },
             [&](const unary_expr* expr) {
                 switch (expr->op())
                 {
