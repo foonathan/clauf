@@ -55,7 +55,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const clauf::type* ty)
         if (clauf::is_signed_int(ty))
             lauf_asm_inst_call_builtin(b, lauf_lib_int_sadd(LAUF_LIB_INT_OVERFLOW_PANIC));
         else if (clauf::is_unsigned_int(ty))
-            lauf_asm_inst_call_builtin(b, lauf_lib_int_uadd(LAUF_LIB_INT_OVERFLOW_PANIC));
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_uadd(LAUF_LIB_INT_OVERFLOW_WRAP));
         else
             CLAUF_UNREACHABLE("invalid type");
         break;
@@ -63,7 +63,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const clauf::type* ty)
         if (clauf::is_signed_int(ty))
             lauf_asm_inst_call_builtin(b, lauf_lib_int_ssub(LAUF_LIB_INT_OVERFLOW_PANIC));
         else if (clauf::is_unsigned_int(ty))
-            lauf_asm_inst_call_builtin(b, lauf_lib_int_usub(LAUF_LIB_INT_OVERFLOW_PANIC));
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_usub(LAUF_LIB_INT_OVERFLOW_WRAP));
         else
             CLAUF_UNREACHABLE("invalid type");
         break;
@@ -71,7 +71,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const clauf::type* ty)
         if (clauf::is_signed_int(ty))
             lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
         else if (clauf::is_unsigned_int(ty))
-            lauf_asm_inst_call_builtin(b, lauf_lib_int_umul(LAUF_LIB_INT_OVERFLOW_PANIC));
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_umul(LAUF_LIB_INT_OVERFLOW_WRAP));
         else
             CLAUF_UNREACHABLE("invalid type");
         break;
