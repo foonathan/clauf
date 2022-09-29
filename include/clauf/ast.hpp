@@ -110,7 +110,8 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, function
 };
 using type_forest = dryad::hash_forest<type, type_hasher>;
 
-type* clone(type_forest::node_creator creator, const type* ty);
+type*       clone(type_forest::node_creator creator, const type* ty);
+const type* make_unsigned(type_forest::node_creator creator, const type* ty);
 
 bool is_same(const type* lhs, const type* rhs);
 
@@ -122,6 +123,9 @@ bool is_arithmetic(const type* ty);
 bool is_scalar(const type* ty);
 
 bool is_complete_object_type(const type* ty);
+
+/// Returns -1 for non-integers.
+unsigned integer_rank_of(const type* ty);
 } // namespace clauf
 
 namespace clauf

@@ -21,6 +21,24 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
         });
 }
 
+const clauf::type* clauf::make_unsigned(type_forest::node_creator creator, const type* ty)
+{
+    if (!dryad::node_has_kind<clauf::builtin_type>(ty))
+        return nullptr;
+
+    auto kind = dryad::node_cast<clauf::builtin_type>(ty)->type_kind();
+    switch (kind)
+    {
+    case clauf::builtin_type::uint64:
+        return ty;
+    case clauf::builtin_type::sint64:
+        return creator.create<clauf::builtin_type>(clauf::builtin_type::uint64);
+
+    case clauf::builtin_type::void_:
+        return nullptr;
+    }
+}
+
 bool clauf::is_same(const type* lhs, const type* rhs)
 {
     if (lhs == rhs)
@@ -72,6 +90,23 @@ bool clauf::is_complete_object_type(const type* ty)
         return false;
 
     return !clauf::is_void(ty);
+}
+
+unsigned clauf::integer_rank_of(const type* ty)
+{
+    if (!dryad::node_has_kind<clauf::builtin_type>(ty))
+        return unsigned(-1);
+
+    auto kind = dryad::node_cast<clauf::builtin_type>(ty)->type_kind();
+    switch (kind)
+    {
+    case clauf::builtin_type::sint64:
+    case clauf::builtin_type::uint64:
+        return 64;
+
+    case clauf::builtin_type::void_:
+        return unsigned(-1);
+    }
 }
 
 clauf::name clauf::get_name(const declarator* decl)

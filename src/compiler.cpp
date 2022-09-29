@@ -123,6 +123,51 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
     return value;
 }
 
+// Performs the usual arithmetic conversions on both operands.
+void do_usual_arithmetic_conversions(compiler_state& state, clauf::location loc, clauf::expr*& lhs,
+                                     clauf::expr*& rhs)
+{
+    CLAUF_PRECONDITION(clauf::is_integer(lhs->type()) && clauf::is_integer(rhs->type()));
+    if (clauf::is_same(lhs->type(), rhs->type()))
+        return;
+
+    if (clauf::is_signed_int(lhs->type()) == clauf::is_signed_int(rhs->type()))
+    {
+        auto rank_lhs = clauf::integer_rank_of(lhs->type());
+        auto rank_rhs = clauf::integer_rank_of(rhs->type());
+        if (rank_lhs > rank_rhs)
+            rhs = state.ast.create<clauf::cast_expr>(loc, lhs->type(), rhs);
+        else
+            lhs = state.ast.create<clauf::cast_expr>(loc, rhs->type(), lhs);
+    }
+    else
+    {
+        auto& signed_op   = clauf::is_signed_int(lhs->type()) ? lhs : rhs;
+        auto& unsigned_op = clauf::is_unsigned_int(lhs->type()) ? lhs : rhs;
+
+        auto signed_rank   = clauf::integer_rank_of(signed_op->type());
+        auto unsigned_rank = clauf::integer_rank_of(unsigned_op->type());
+        if (unsigned_rank >= signed_rank)
+        {
+            signed_op = state.ast.create<clauf::cast_expr>(loc, unsigned_op->type(), signed_op);
+        }
+        // Since the rank is the number of bits, this compares the value range.
+        else if (signed_rank > unsigned_rank)
+        {
+            unsigned_op = state.ast.create<clauf::cast_expr>(loc, signed_op->type(), unsigned_op);
+        }
+        else
+        {
+            auto target_type = state.ast.types.build([&](auto creator) {
+                // TODO: figure out how to remove the const cast.
+                return (clauf::type*)clauf::make_unsigned(creator, signed_op->type());
+            });
+            signed_op        = state.ast.create<clauf::cast_expr>(loc, target_type, signed_op);
+            unsigned_op      = state.ast.create<clauf::cast_expr>(loc, target_type, unsigned_op);
+        }
+    }
+}
+
 template <typename ReturnType, typename... Callback>
 constexpr auto callback(Callback... cb)
 {
@@ -510,16 +555,6 @@ struct assignment_expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
-            // TODO: conversion
-            if (!clauf::is_same(left->type(), right->type()))
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error,
-                         "cannot do implicit conversion between operands")
-                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
-                    .finish();
-            }
-
             auto is_valid_type = [&] {
                 switch (op)
                 {
@@ -543,25 +578,25 @@ struct assignment_expr : lexy::expression_production
                     .annotation(clauf::annotation_kind::primary, op.loc, "here")
                     .finish();
             }
+            else
+            {
+                if (op != clauf::arithmetic_op::shl && op != clauf::arithmetic_op::shr)
+                    do_usual_arithmetic_conversions(state, op.loc, left, right);
+            }
 
             return state.ast.create<clauf::arithmetic_expr>(op.loc, left->type(), op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
-            // TODO: conversion
-            if (!clauf::is_same(left->type(), right->type()))
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error,
-                         "cannot do implicit conversion between operands")
-                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
-                    .finish();
-            }
             if (!clauf::is_arithmetic(left->type()))
             {
                 state.logger.log(clauf::diagnostic_kind::error, "invalid type for comparison")
                     .annotation(clauf::annotation_kind::primary, op.loc, "here")
                     .finish();
+            }
+            else
+            {
+                do_usual_arithmetic_conversions(state, op.loc, left, right);
             }
 
             auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);
@@ -569,16 +604,7 @@ struct assignment_expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
-            // TODO: conversion
-            if (!clauf::is_same(left->type(), right->type()))
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error,
-                         "cannot do implicit conversion between operands")
-                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
-                    .finish();
-            }
-            if (!clauf::is_scalar(left->type()))
+            if (!clauf::is_scalar(left->type()) || !clauf::is_scalar(right->type()))
             {
                 state.logger.log(clauf::diagnostic_kind::error, "invalid type for logical operator")
                     .annotation(clauf::annotation_kind::primary, op.loc, "here")
@@ -604,8 +630,11 @@ struct assignment_expr : lexy::expression_production
                     .finish();
             }
 
-            // TODO: conversion
-            if (!clauf::is_same(if_true->type(), if_false->type()))
+            if (clauf::is_arithmetic(if_true->type()) && clauf::is_arithmetic(if_false->type()))
+            {
+                do_usual_arithmetic_conversions(state, op.loc, if_true, if_false);
+            }
+            else if (!clauf::is_same(if_true->type(), if_false->type()))
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error,
