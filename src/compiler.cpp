@@ -104,6 +104,25 @@ void check_inside_loop(compiler_state& state, clauf::location loc)
     }
 }
 
+// Attempts to convert the value expression to target_type by creating a cast_expr or raising an
+// error.
+clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc,
+                                      const clauf::type* target_type, clauf::expr* value)
+{
+    if (clauf::is_same(target_type, value->type()))
+        return value;
+
+    // TODO: this is done from memory, find the place in the spec where implicit conversions are
+    // specified.
+    if (clauf::is_arithmetic(target_type) && clauf::is_arithmetic(value->type()))
+        return state.ast.create<clauf::cast_expr>(loc, target_type, value);
+
+    state.logger.log(clauf::diagnostic_kind::error, "cannot do implicit conversion in assignment")
+        .annotation(clauf::annotation_kind::primary, loc, "here")
+        .finish();
+    return value;
+}
+
 template <typename ReturnType, typename... Callback>
 constexpr auto callback(Callback... cb)
 {
@@ -421,19 +440,15 @@ struct assignment_expr : lexy::expression_production
                                                              clauf::type_list());
             }
 
-            if (!std::equal(fn_type->parameters().begin(), fn_type->parameters().end(),
-                            arguments.begin(), arguments.end(),
-                            [&](const clauf::type* param_type, const clauf::expr* argument) {
-                                // TODO: allow implicit conversion
-                                return clauf::is_same(param_type, argument->type());
-                            }))
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error, "mismatched parameter and argument type")
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
-                                "call here")
-                    .finish();
-            }
+            // TODO: abuse of algorithm
+            std::equal(fn_type->parameters().begin(), fn_type->parameters().end(),
+                       arguments.begin(), arguments.end(),
+                       [&](const clauf::type* param_type, clauf::expr*& argument) {
+                           argument
+                               = do_assignment_conversion(state, state.ast.location_of(argument),
+                                                          param_type, argument);
+                           return true;
+                       });
 
             return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
                                                                arguments);
@@ -576,16 +591,7 @@ struct assignment_expr : lexy::expression_production
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
             // TODO: assert that left is an lvalue
-            // TODO: conversion
-            if (!clauf::is_same(left->type(), right->type()))
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error,
-                         "cannot do implicit conversion between operands")
-                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
-                    .finish();
-            }
-            // TODO: type check
+            right = do_assignment_conversion(state, op.loc, left->type(), right);
             return state.ast.create<clauf::assignment_expr>(op.loc, left->type(), op, left, right);
         },
         [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
