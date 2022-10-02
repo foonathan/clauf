@@ -594,6 +594,9 @@ lauf_asm_module* clauf::codegen(const ast& ast)
         dryad::visit_node(
             decl, [&](const function_decl* decl) { codegen_function(ctx, decl); },
             [&](const variable_decl* decl) {
+                if (decl->has_initializer())
+                    CLAUF_TODO("initializers for global variables not yet supported");
+
                 // TODO: types other than int
                 auto global
                     = lauf_asm_add_global_zero_data(ctx.mod,
