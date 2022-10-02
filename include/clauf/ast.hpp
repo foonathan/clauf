@@ -617,7 +617,7 @@ class variable_decl : public dryad::basic_node<node_kind::variable_decl, decl>
 {
 public:
     explicit variable_decl(dryad::node_ctor ctor, ast_symbol name, const clauf::type* type,
-                           clauf::expr* initializer)
+                           clauf::expr* initializer = nullptr)
     : node_base(ctor, name, type)
     {
         if (initializer != nullptr)
@@ -627,6 +627,11 @@ public:
     bool has_initializer() const
     {
         return first_child() != nullptr;
+    }
+    void set_initializer(clauf::expr* initializer)
+    {
+        CLAUF_PRECONDITION(!has_initializer());
+        insert_child_after(nullptr, initializer);
     }
     DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, nullptr)
 };

@@ -927,37 +927,52 @@ struct declaration
     static constexpr auto rule
         = dsl::p<type_specifier> >> dsl::p<init_declarator_list> + dsl::semicolon;
 
-    static constexpr auto value = callback<clauf::decl_list>(
-        [](compiler_state& state, clauf::type* decl_type, const clauf::declarator_list& decls) {
-            clauf::decl_list result;
-            for (auto decl : decls)
-            {
-                auto name = get_name(decl);
-                auto type = get_type(state.ast.types, decl, decl_type);
+    static clauf::decl* create_non_init_declaration(compiler_state& state, clauf::type* decl_type,
+                                                    const clauf::declarator* declarator)
+    {
+        auto name = get_name(declarator);
+        auto type = get_type(state.ast.types, declarator, decl_type);
 
-                result.push_back(dryad::visit_node_all(
-                    decl,
-                    [&](const clauf::name_declarator*) -> clauf::decl* {
-                        if (!clauf::is_complete_object_type(type))
-                        {
-                            state.logger
-                                .log(clauf::diagnostic_kind::error,
-                                     "invalid use of incomplete object type")
-                                .annotation(clauf::annotation_kind::primary, name.loc,
-                                            "used to declare variable here")
-                                .finish();
-                        }
+        return dryad::visit_node_all(
+            declarator,
+            [&](const clauf::name_declarator*) -> clauf::decl* {
+                if (!clauf::is_complete_object_type(type))
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
+                        .annotation(clauf::annotation_kind::primary, name.loc,
+                                    "used to declare variable here")
+                        .finish();
+                }
 
-                        return state.ast.create<clauf::variable_decl>(name.loc, name.symbol, type,
-                                                                      get_init(decl));
-                    },
-                    [&](const clauf::function_declarator* decl) -> clauf::decl* {
-                        return state.ast.create<clauf::function_decl>(name.loc, name.symbol, type,
-                                                                      decl->parameters());
-                    }));
-            }
-            return result;
-        });
+                return state.ast.create<clauf::variable_decl>(name.loc, name.symbol, type);
+            },
+            [&](const clauf::function_declarator* decl) -> clauf::decl* {
+                return state.ast.create<clauf::function_decl>(name.loc, name.symbol, type,
+                                                              decl->parameters());
+            });
+    }
+
+    static constexpr auto value
+        = callback<clauf::decl_list>([](compiler_state& state, clauf::type* decl_type,
+                                        const clauf::declarator_list& declarators) {
+              clauf::decl_list result;
+              for (auto declarator : declarators)
+              {
+                  if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
+                  {
+                      auto decl     = create_non_init_declaration(state, decl_type, init->child());
+                      auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
+                      var_decl->set_initializer(init->initializer());
+                      result.push_back(decl);
+                  }
+                  else
+                  {
+                      result.push_back(create_non_init_declaration(state, decl_type, declarator));
+                  }
+              }
+              return result;
+          });
 };
 
 struct global_declaration : lexy::scan_production<clauf::decl_list>
