@@ -3,7 +3,6 @@
 
 #include <clauf/compiler.hpp>
 
-#include <algorithm>
 #include <dryad/symbol_table.hpp>
 #include <lexy/action/parse.hpp>
 #include <lexy/callback.hpp>
@@ -533,18 +532,30 @@ struct expr : lexy::expression_production
                                                              clauf::type_list());
             }
 
-            // TODO: abuse of algorithm
-            std::equal(fn_type->parameters().begin(), fn_type->parameters().end(),
-                       arguments.begin(), arguments.end(),
-                       [&](const clauf::type* param_type, clauf::expr*& argument) {
-                           argument
-                               = do_assignment_conversion(state, state.ast.location_of(argument),
-                                                          param_type, argument);
-                           return true;
-                       });
+            clauf::expr_list converted_arguments;
+            auto             cur_param = fn_type->parameters().begin();
+            auto             end_param = fn_type->parameters().end();
+            while (!arguments.empty() && cur_param != end_param)
+            {
+                auto argument = arguments.pop_front();
+                argument      = do_assignment_conversion(state, state.ast.location_of(argument),
+                                                         *cur_param, argument);
+                converted_arguments.push_back(argument);
+
+                ++cur_param;
+            }
+            if (!arguments.empty() || cur_param != end_param)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "mismatched number of parameters and arguments in function call")
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
+                                "call here")
+                    .finish();
+            }
 
             return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
-                                                               arguments);
+                                                               converted_arguments);
         },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
             auto is_valid_type = [&] {

@@ -11,7 +11,6 @@
 #include <dryad/symbol.hpp>
 #include <dryad/tree.hpp>
 #include <lexy/input/buffer.hpp>
-#include <vector>
 
 #include <clauf/assert.hpp>
 
@@ -228,7 +227,7 @@ private:
     const clauf::type* _type;
 };
 
-using expr_list = std::vector<expr*>;
+using expr_list = dryad::unlinked_node_list<expr>;
 
 class integer_constant_expr : public dryad::basic_node<node_kind::integer_constant_expr, expr>
 {
@@ -273,12 +272,7 @@ public:
     : node_base(ctor, type)
     {
         insert_child_after(nullptr, fn);
-        auto last = this->function();
-        for (auto& expr : arguments)
-        {
-            insert_child_after(last, expr);
-            last = expr;
-        }
+        insert_child_list_after(fn, arguments);
     }
 
     DRYAD_CHILD_NODE_GETTER(expr, function, nullptr)
