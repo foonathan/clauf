@@ -21,7 +21,7 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
         });
 }
 
-const clauf::type* clauf::make_unsigned(type_forest::node_creator creator, const type* ty)
+clauf::type* clauf::make_unsigned(type_forest::node_creator creator, const type* ty)
 {
     if (!dryad::node_has_kind<clauf::builtin_type>(ty))
         return nullptr;
@@ -30,7 +30,7 @@ const clauf::type* clauf::make_unsigned(type_forest::node_creator creator, const
     switch (kind)
     {
     case clauf::builtin_type::uint64:
-        return ty;
+        return creator.create<clauf::builtin_type>(clauf::builtin_type::uint64);
     case clauf::builtin_type::sint64:
         return creator.create<clauf::builtin_type>(clauf::builtin_type::uint64);
 

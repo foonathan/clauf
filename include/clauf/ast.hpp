@@ -109,8 +109,8 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, function
 };
 using type_forest = dryad::hash_forest<type, type_hasher>;
 
-type*       clone(type_forest::node_creator creator, const type* ty);
-const type* make_unsigned(type_forest::node_creator creator, const type* ty);
+type* clone(type_forest::node_creator creator, const type* ty);
+type* make_unsigned(type_forest::node_creator creator, const type* ty);
 
 bool is_same(const type* lhs, const type* rhs);
 

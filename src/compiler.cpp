@@ -157,12 +157,10 @@ void do_usual_arithmetic_conversions(compiler_state& state, clauf::location loc,
         }
         else
         {
-            auto target_type = state.ast.types.build([&](auto creator) {
-                // TODO: figure out how to remove the const cast.
-                return (clauf::type*)clauf::make_unsigned(creator, signed_op->type());
-            });
-            signed_op        = state.ast.create<clauf::cast_expr>(loc, target_type, signed_op);
-            unsigned_op      = state.ast.create<clauf::cast_expr>(loc, target_type, unsigned_op);
+            auto target_type = state.ast.types.build(
+                [&](auto creator) { return clauf::make_unsigned(creator, signed_op->type()); });
+            signed_op   = state.ast.create<clauf::cast_expr>(loc, target_type, signed_op);
+            unsigned_op = state.ast.create<clauf::cast_expr>(loc, target_type, unsigned_op);
         }
     }
 }
