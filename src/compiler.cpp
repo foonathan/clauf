@@ -247,6 +247,37 @@ struct identifier
 //=== expression parsing ===//
 namespace clauf::grammar
 {
+template <typename Enum>
+struct op_tag
+{
+    clauf::location loc;
+    Enum            op;
+
+    op_tag(clauf::location loc, Enum op) : loc(loc), op(op) {}
+
+    operator Enum()
+    {
+        return op;
+    }
+};
+template <auto Enum>
+struct op_tag_for : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>
+{
+    op_tag_for(const char* pos) : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>(pos, Enum) {}
+};
+
+template <auto Enum, typename Rule>
+constexpr auto op_(Rule rule)
+{
+    return dsl::op<op_tag_for<Enum>>(rule);
+}
+} // namespace clauf::grammar
+
+namespace clauf::grammar
+{
+struct unary_expr;
+struct assignment_expr;
+
 struct integer_constant_expr
 {
     template <typename Base>
@@ -311,35 +342,6 @@ struct identifier_expr
           });
 };
 
-template <typename Enum>
-struct op_tag
-{
-    clauf::location loc;
-    Enum            op;
-
-    op_tag(clauf::location loc, Enum op) : loc(loc), op(op) {}
-
-    operator Enum()
-    {
-        return op;
-    }
-};
-template <auto Enum>
-struct op_tag_for : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>
-{
-    op_tag_for(const char* pos) : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>(pos, Enum) {}
-};
-
-template <auto Enum, typename Rule>
-constexpr auto op_(Rule rule)
-{
-    return dsl::op<op_tag_for<Enum>>(rule);
-}
-
-struct expr;
-struct assignment_expr;
-struct type_specifier_list;
-
 struct argument_list
 {
     static constexpr auto rule = dsl::terminator(LEXY_LIT(")"))
@@ -349,11 +351,11 @@ struct argument_list
 
 struct type_name
 {
-    static constexpr auto rule  = dsl::recurse_branch<type_specifier_list>;
+    static constexpr auto rule  = dsl::recurse_branch<struct type_specifier_list>;
     static constexpr auto value = lexy::forward<clauf::type*>;
 };
 
-struct cast_expr : lexy::expression_production
+struct expr : lexy::expression_production
 {
     // primary-expression
     static constexpr auto atom = [] {
@@ -367,8 +369,8 @@ struct cast_expr : lexy::expression_production
         // We thus do it here as part of the primary-expression, even though it is not a
         // primary-expression, but has lower precedence. However, no other operator matches before
         // that, so it works out.
-        auto cast       = dsl::p<type_name> >> dsl::parenthesized.close() + dsl::recurse<cast_expr>;
-        auto parens     = dsl::recurse<expr> + dsl::parenthesized.close();
+        auto cast   = dsl::p<type_name> >> dsl::parenthesized.close() + dsl::recurse<unary_expr>;
+        auto parens = dsl::recurse<expr> + dsl::parenthesized.close();
         auto paren_expr = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
 
         return paren_expr | id | dsl::else_ >> constant;
@@ -389,107 +391,14 @@ struct cast_expr : lexy::expression_production
         using operand = postfix;
     };
 
-    using operation = unary;
-
-    static constexpr auto value = callback<clauf::expr*>( //
-        [](const compiler_state&, clauf::expr* expr) { return expr; },
-        [](const compiler_state&, const char*, clauf::expr* expr) { return expr; },
-        [](compiler_state& state, clauf::expr* fn, op_tag<int> op, clauf::expr_list arguments) {
-            auto fn_type = dryad::node_try_cast<clauf::function_type>(fn->type());
-            if (fn_type == nullptr)
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error, "called expression is not a function")
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
-                                "call here")
-                    .finish();
-
-                fn_type
-                    = state.ast.create<clauf::function_type>(state.ast.create<clauf::builtin_type>(
-                                                                 clauf::builtin_type::sint64),
-                                                             clauf::type_list());
-            }
-
-            // TODO: abuse of algorithm
-            std::equal(fn_type->parameters().begin(), fn_type->parameters().end(),
-                       arguments.begin(), arguments.end(),
-                       [&](const clauf::type* param_type, clauf::expr*& argument) {
-                           argument
-                               = do_assignment_conversion(state, state.ast.location_of(argument),
-                                                          param_type, argument);
-                           return true;
-                       });
-
-            return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
-                                                               arguments);
-        },
-        [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
-            auto is_valid_type = [&] {
-                switch (op)
-                {
-                case unary_op::plus:
-                case unary_op::neg:
-                    return clauf::is_arithmetic(child->type());
-                case unary_op::bnot:
-                    return clauf::is_integer(child->type());
-                case unary_op::lnot:
-                    return clauf::is_scalar(child->type());
-                }
-            }();
-            if (!is_valid_type)
-            {
-                state.logger.log(clauf::diagnostic_kind::error, "invalid type for unary operator")
-                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
-                    .finish();
-            }
-
-            // TODO: promote type
-            auto type = op == unary_op::lnot ? state.ast.create(clauf::builtin_type::sint64)
-                                             : child->type();
-            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
-        },
-        [](compiler_state& state, const char* pos, const clauf::type* target_type,
-           clauf::expr* child) -> clauf::expr* {
-            // Check that the target type is valid.
-            if (!clauf::is_scalar(target_type) && !clauf::is_void(target_type))
-            {
-                state.logger.log(clauf::diagnostic_kind::error, "invalid target type for cast")
-                    .annotation(clauf::annotation_kind::primary, pos, "cast here")
-                    .finish();
-            }
-
-            // Check that we can convert the source type to target type.
-            if (clauf::is_void(target_type))
-            {
-                // All source types allowed.
-            }
-            else if (clauf::is_arithmetic(target_type))
-            {
-                if (!clauf::is_arithmetic(child->type()))
-                {
-                    state.logger.log(clauf::diagnostic_kind::error, "invalid source type for cast")
-                        .annotation(clauf::annotation_kind::primary, pos, "cast here")
-                        .finish();
-                }
-            }
-
-            if (clauf::is_same(target_type, child->type()))
-                return child;
-            else
-                return state.ast.create<clauf::cast_expr>(pos, target_type, child);
-        });
-};
-
-struct assignment_expr : lexy::expression_production
-{
-    static constexpr auto atom = dsl::p<cast_expr>;
-
     struct multiplicative : dsl::infix_op_left
     {
         static constexpr auto op = op_<clauf::arithmetic_op::mul>(LEXY_LIT("*"))
                                    / op_<clauf::arithmetic_op::div>(LEXY_LIT("/"))
                                    / op_<clauf::arithmetic_op::rem>(LEXY_LIT("%"));
-        using operand = dsl::atom;
+
+        // Operand should be cast, but it is handled as part of the atom.
+        using operand = unary;
     };
 
     struct additive : dsl::infix_op_left
@@ -569,10 +478,99 @@ struct assignment_expr : lexy::expression_production
         using operand = conditional;
     };
 
-    using operation = assignment;
+    struct operation : dsl::infix_op_left
+    {
+        static constexpr auto op = op_<sequenced_op::comma>(dsl::comma);
+        using operand            = assignment;
+    };
 
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
+        [](const compiler_state&, const char*, clauf::expr* expr) { return expr; },
+        [](compiler_state& state, const char* pos, const clauf::type* target_type,
+           clauf::expr* child) -> clauf::expr* {
+            // Check that the target type is valid.
+            if (!clauf::is_scalar(target_type) && !clauf::is_void(target_type))
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "invalid target type for cast")
+                    .annotation(clauf::annotation_kind::primary, pos, "cast here")
+                    .finish();
+            }
+
+            // Check that we can convert the source type to target type.
+            if (clauf::is_void(target_type))
+            {
+                // All source types allowed.
+            }
+            else if (clauf::is_arithmetic(target_type))
+            {
+                if (!clauf::is_arithmetic(child->type()))
+                {
+                    state.logger.log(clauf::diagnostic_kind::error, "invalid source type for cast")
+                        .annotation(clauf::annotation_kind::primary, pos, "cast here")
+                        .finish();
+                }
+            }
+
+            if (clauf::is_same(target_type, child->type()))
+                return child;
+            else
+                return state.ast.create<clauf::cast_expr>(pos, target_type, child);
+        },
+        [](compiler_state& state, clauf::expr* fn, op_tag<int> op, clauf::expr_list arguments) {
+            auto fn_type = dryad::node_try_cast<clauf::function_type>(fn->type());
+            if (fn_type == nullptr)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "called expression is not a function")
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
+                                "call here")
+                    .finish();
+
+                fn_type
+                    = state.ast.create<clauf::function_type>(state.ast.create<clauf::builtin_type>(
+                                                                 clauf::builtin_type::sint64),
+                                                             clauf::type_list());
+            }
+
+            // TODO: abuse of algorithm
+            std::equal(fn_type->parameters().begin(), fn_type->parameters().end(),
+                       arguments.begin(), arguments.end(),
+                       [&](const clauf::type* param_type, clauf::expr*& argument) {
+                           argument
+                               = do_assignment_conversion(state, state.ast.location_of(argument),
+                                                          param_type, argument);
+                           return true;
+                       });
+
+            return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
+                                                               arguments);
+        },
+        [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
+            auto is_valid_type = [&] {
+                switch (op)
+                {
+                case unary_op::plus:
+                case unary_op::neg:
+                    return clauf::is_arithmetic(child->type());
+                case unary_op::bnot:
+                    return clauf::is_integer(child->type());
+                case unary_op::lnot:
+                    return clauf::is_scalar(child->type());
+                }
+            }();
+            if (!is_valid_type)
+            {
+                state.logger.log(clauf::diagnostic_kind::error, "invalid type for unary operator")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
+            // TODO: promote type
+            auto type = op == unary_op::lnot ? state.ast.create(clauf::builtin_type::sint64)
+                                             : child->type();
+            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+        },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
             auto is_valid_type = [&] {
@@ -624,15 +622,26 @@ struct assignment_expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
-            if (!clauf::is_scalar(left->type()) || !clauf::is_scalar(right->type()))
+            if (op == clauf::sequenced_op::comma)
             {
-                state.logger.log(clauf::diagnostic_kind::error, "invalid type for logical operator")
-                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
-                    .finish();
+                // The type of the comma operator is the type of the right expression.
+                return state.ast.create<clauf::sequenced_expr>(op.loc, right->type(), op, left,
+                                                               right);
             }
+            else
+            {
+                if (!clauf::is_scalar(left->type()) || !clauf::is_scalar(right->type()))
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error, "invalid type for logical operator")
+                        .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                        .finish();
+                }
 
-            auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);
-            return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
+                auto type
+                    = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);
+                return state.ast.create<clauf::sequenced_expr>(op.loc, type, op, left, right);
+            }
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
@@ -667,24 +676,10 @@ struct assignment_expr : lexy::expression_production
         });
 };
 
-struct expr : lexy::expression_production
-{
-    static constexpr auto atom = dsl::p<assignment_expr>;
-
-    struct operation : dsl::infix_op_left
-    {
-        static constexpr auto op = op_<sequenced_op::comma>(dsl::comma);
-        using operand            = dsl::atom;
-    };
-
-    static constexpr auto value = callback<clauf::expr*>( //
-        [](const compiler_state&, clauf::expr* expr) { return expr; },
-        [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
-           clauf::expr* right) {
-            // The type of the comma operator is the type of the right expression.
-            return state.ast.create<clauf::sequenced_expr>(op.loc, right->type(), op, left, right);
-        });
-};
+struct unary_expr : lexy::subexpression_production<expr, expr::unary>
+{};
+struct assignment_expr : lexy::subexpression_production<expr, expr::assignment>
+{};
 } // namespace clauf::grammar
 
 //=== statement parsing ===//
