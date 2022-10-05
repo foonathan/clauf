@@ -247,7 +247,7 @@ struct identifier
 //=== expression parsing ===//
 namespace clauf::grammar
 {
-template <typename Enum>
+template <typename Enum = std::nullptr_t>
 struct op_tag
 {
     clauf::location loc;
@@ -266,7 +266,7 @@ struct op_tag_for : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>
     op_tag_for(const char* pos) : op_tag<DRYAD_DECAY_DECLTYPE(Enum)>(pos, Enum) {}
 };
 
-template <auto Enum, typename Rule>
+template <auto Enum = nullptr, typename Rule>
 constexpr auto op_(Rule rule)
 {
     return dsl::op<op_tag_for<Enum>>(rule);
@@ -378,7 +378,7 @@ struct expr : lexy::expression_production
 
     struct postfix : dsl::postfix_op
     {
-        static constexpr auto op = op_<0>(LEXY_LIT("(") >> dsl::p<argument_list>);
+        static constexpr auto op = op_(LEXY_LIT("(") >> dsl::p<argument_list>);
         using operand            = dsl::atom;
     };
 
@@ -517,7 +517,7 @@ struct expr : lexy::expression_production
             else
                 return state.ast.create<clauf::cast_expr>(pos, target_type, child);
         },
-        [](compiler_state& state, clauf::expr* fn, op_tag<int> op, clauf::expr_list arguments) {
+        [](compiler_state& state, clauf::expr* fn, op_tag<> op, clauf::expr_list arguments) {
             auto fn_type = dryad::node_try_cast<clauf::function_type>(fn->type());
             if (fn_type == nullptr)
             {
