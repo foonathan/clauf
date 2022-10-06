@@ -34,6 +34,7 @@ enum class type_specifier
 
     signed_,
     unsigned_,
+    char_,
     short_,
 };
 
@@ -45,6 +46,8 @@ public:
     {
         void_,
 
+        sint8,
+        uint8,
         sint16,
         uint16,
         sint32,

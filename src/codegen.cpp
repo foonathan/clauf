@@ -56,6 +56,10 @@ lauf_asm_type codegen_type(const clauf::type* ty)
             case clauf::builtin_type::void_:
                 CLAUF_UNREACHABLE("not needed in lauf");
 
+            case clauf::builtin_type::sint8:
+                return lauf_lib_int_s8;
+            case clauf::builtin_type::uint8:
+                return lauf_lib_int_u8;
             case clauf::builtin_type::sint16:
                 return lauf_lib_int_s16;
             case clauf::builtin_type::uint16:

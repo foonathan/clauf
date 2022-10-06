@@ -136,6 +136,8 @@ clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, cl
             CLAUF_UNREACHABLE("not an integer");
             return nullptr;
 
+        case clauf::builtin_type::sint8:
+        case clauf::builtin_type::uint8:
         case clauf::builtin_type::sint16:
         case clauf::builtin_type::uint16:
         case clauf::builtin_type::sint32:
@@ -234,6 +236,7 @@ constexpr auto kw_do       = LEXY_KEYWORD("do", id);
 constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
                                         .map(LEXY_LIT("void"), clauf::type_specifier::void_)
                                         .map(LEXY_LIT("int"), clauf::type_specifier::int_)
+                                        .map(LEXY_LIT("char"), clauf::type_specifier::char_)
                                         .map(LEXY_LIT("signed"), clauf::type_specifier::signed_)
                                         .map(LEXY_LIT("unsigned"), clauf::type_specifier::unsigned_)
                                         .map(LEXY_LIT("short"), clauf::type_specifier::short_);
@@ -943,6 +946,12 @@ struct type_specifier_list
                               log_error();
                           base_type = clauf::builtin_type::sint64;
                           break;
+                      case clauf::type_specifier::char_:
+                          if (base_type.has_value())
+                              log_error();
+                          // TODO: set base type to char, not signed char
+                          base_type = clauf::builtin_type::sint8;
+                          break;
 
                       case clauf::type_specifier::signed_:
                           if (is_signed.has_value())
@@ -972,30 +981,29 @@ struct type_specifier_list
                   case builtin_type::void_:
                       return state.ast.types.lookup_or_create<clauf::builtin_type>(
                           clauf::builtin_type::void_);
+                  case builtin_type::sint8:
+                      if (is_signed.value_or(true))
+                          return state.ast.create(clauf::builtin_type::sint8);
+                      else
+                          return state.ast.create(clauf::builtin_type::uint8);
                   case builtin_type::sint64:
                       if (is_signed.value_or(true))
                       {
                           if (short_count == 0)
-                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                                  clauf::builtin_type::sint64);
+                              return state.ast.create(clauf::builtin_type::sint64);
                           else if (short_count == 1)
-                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                                  clauf::builtin_type::sint32);
+                              return state.ast.create(clauf::builtin_type::sint32);
                           else
-                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                                  clauf::builtin_type::sint16);
+                              return state.ast.create(clauf::builtin_type::sint16);
                       }
                       else
                       {
                           if (short_count == 0)
-                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                                  clauf::builtin_type::uint64);
+                              return state.ast.create(clauf::builtin_type::uint64);
                           else if (short_count == 1)
-                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                                  clauf::builtin_type::uint32);
+                              return state.ast.create(clauf::builtin_type::uint32);
                           else
-                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                                  clauf::builtin_type::uint16);
+                              return state.ast.create(clauf::builtin_type::uint16);
                       }
 
                   default:
