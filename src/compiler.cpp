@@ -122,11 +122,43 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
     return value;
 }
 
+// Performs integer promotion.
+clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, clauf::expr* expr)
+{
+    if (!clauf::is_integer(expr->type()))
+        return expr;
+
+    auto target_type = [&]() -> const clauf::type* {
+        auto kind = dryad::node_cast<clauf::builtin_type>(expr->type())->type_kind();
+        switch (kind)
+        {
+        case clauf::builtin_type::void_:
+            CLAUF_UNREACHABLE("not an integer");
+            return nullptr;
+
+        case clauf::builtin_type::sint32:
+        case clauf::builtin_type::uint32:
+            return state.ast.create(clauf::builtin_type::sint64);
+
+        case clauf::builtin_type::sint64:
+        case clauf::builtin_type::uint64:
+            return expr->type();
+        }
+    }();
+    if (clauf::is_same(target_type, expr->type()))
+        return expr;
+
+    return state.ast.create<clauf::cast_expr>(loc, target_type, expr);
+}
+
 // Performs the usual arithmetic conversions on both operands.
 void do_usual_arithmetic_conversions(compiler_state& state, clauf::location loc, clauf::expr*& lhs,
                                      clauf::expr*& rhs)
 {
     CLAUF_PRECONDITION(clauf::is_integer(lhs->type()) && clauf::is_integer(rhs->type()));
+
+    lhs = do_integer_promotion(state, loc, lhs);
+    rhs = do_integer_promotion(state, loc, rhs);
     if (clauf::is_same(lhs->type(), rhs->type()))
         return;
 
