@@ -56,6 +56,10 @@ lauf_asm_type codegen_type(const clauf::type* ty)
             case clauf::builtin_type::void_:
                 CLAUF_UNREACHABLE("not needed in lauf");
 
+            case clauf::builtin_type::sint16:
+                return lauf_lib_int_s16;
+            case clauf::builtin_type::uint16:
+                return lauf_lib_int_u16;
             case clauf::builtin_type::sint32:
                 return lauf_lib_int_s32;
             case clauf::builtin_type::uint32:
@@ -421,6 +425,12 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                     {
                         switch (target_rank)
                         {
+                        case 8:
+                            lauf_asm_inst_call_builtin(b, lauf_lib_int_s8_overflow);
+                            break;
+                        case 16:
+                            lauf_asm_inst_call_builtin(b, lauf_lib_int_s16_overflow);
+                            break;
                         case 32:
                             lauf_asm_inst_call_builtin(b, lauf_lib_int_s32_overflow);
                             break;

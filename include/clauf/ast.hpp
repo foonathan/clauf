@@ -45,6 +45,8 @@ public:
     {
         void_,
 
+        sint16,
+        uint16,
         sint32,
         uint32,
         sint64,

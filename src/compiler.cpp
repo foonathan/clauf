@@ -136,6 +136,8 @@ clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, cl
             CLAUF_UNREACHABLE("not an integer");
             return nullptr;
 
+        case clauf::builtin_type::sint16:
+        case clauf::builtin_type::uint16:
         case clauf::builtin_type::sint32:
         case clauf::builtin_type::uint32:
             return state.ast.create(clauf::builtin_type::sint64);
@@ -976,18 +978,24 @@ struct type_specifier_list
                           if (short_count == 0)
                               return state.ast.types.lookup_or_create<clauf::builtin_type>(
                                   clauf::builtin_type::sint64);
-                          else
+                          else if (short_count == 1)
                               return state.ast.types.lookup_or_create<clauf::builtin_type>(
                                   clauf::builtin_type::sint32);
+                          else
+                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                                  clauf::builtin_type::sint16);
                       }
                       else
                       {
                           if (short_count == 0)
                               return state.ast.types.lookup_or_create<clauf::builtin_type>(
                                   clauf::builtin_type::uint64);
-                          else
+                          else if (short_count == 1)
                               return state.ast.types.lookup_or_create<clauf::builtin_type>(
                                   clauf::builtin_type::uint32);
+                          else
+                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                                  clauf::builtin_type::uint16);
                       }
 
                   default:
