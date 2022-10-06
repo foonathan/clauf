@@ -34,6 +34,7 @@ enum class type_specifier
 
     signed_,
     unsigned_,
+    short_,
 };
 
 /// A builtin type like int.
@@ -44,6 +45,8 @@ public:
     {
         void_,
 
+        sint32,
+        uint32,
         sint64,
         uint64,
     };

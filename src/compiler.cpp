@@ -197,12 +197,12 @@ constexpr auto kw_else     = LEXY_KEYWORD("else", id);
 constexpr auto kw_while    = LEXY_KEYWORD("while", id);
 constexpr auto kw_do       = LEXY_KEYWORD("do", id);
 
-constexpr auto kw_type_specifiers
-    = lexy::symbol_table<clauf::type_specifier> //
-          .map(LEXY_LIT("void"), clauf::type_specifier::void_)
-          .map(LEXY_LIT("int"), clauf::type_specifier::int_)
-          .map(LEXY_LIT("signed"), clauf::type_specifier::signed_)
-          .map(LEXY_LIT("unsigned"), clauf::type_specifier::unsigned_);
+constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
+                                        .map(LEXY_LIT("void"), clauf::type_specifier::void_)
+                                        .map(LEXY_LIT("int"), clauf::type_specifier::int_)
+                                        .map(LEXY_LIT("signed"), clauf::type_specifier::signed_)
+                                        .map(LEXY_LIT("unsigned"), clauf::type_specifier::unsigned_)
+                                        .map(LEXY_LIT("short"), clauf::type_specifier::short_);
 
 constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_stmt::print)
@@ -886,6 +886,7 @@ struct type_specifier_list
                  std::vector<clauf::type_specifier>&& specifiers) -> clauf::type* {
                   std::optional<clauf::builtin_type::type_kind_t> base_type;
                   std::optional<bool>                             is_signed;
+                  int                                             short_count = 0;
 
                   auto log_error = [&] {
                       state.logger
@@ -923,6 +924,13 @@ struct type_specifier_list
                               log_error();
                           is_signed = false;
                           break;
+                      case clauf::type_specifier::short_:
+                          if (short_count == 2)
+                              log_error();
+                          if (base_type == clauf::builtin_type::void_)
+                              log_error();
+                          ++short_count;
+                          break;
                       }
 
                   switch (base_type.value_or(clauf::builtin_type::sint64))
@@ -932,13 +940,25 @@ struct type_specifier_list
                           clauf::builtin_type::void_);
                   case builtin_type::sint64:
                       if (is_signed.value_or(true))
-                          return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                              clauf::builtin_type::sint64);
+                      {
+                          if (short_count == 0)
+                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                                  clauf::builtin_type::sint64);
+                          else
+                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                                  clauf::builtin_type::sint32);
+                      }
                       else
-                          return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                              clauf::builtin_type::uint64);
+                      {
+                          if (short_count == 0)
+                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                                  clauf::builtin_type::uint64);
+                          else
+                              return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                                  clauf::builtin_type::uint32);
+                      }
 
-                  case builtin_type::uint64:
+                  default:
                       CLAUF_UNREACHABLE("not a base type");
                       return nullptr;
                   }

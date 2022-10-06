@@ -29,8 +29,12 @@ clauf::type* clauf::make_unsigned(type_forest::node_creator creator, const type*
     auto kind = dryad::node_cast<clauf::builtin_type>(ty)->type_kind();
     switch (kind)
     {
+    case clauf::builtin_type::uint32:
     case clauf::builtin_type::uint64:
-        return creator.create<clauf::builtin_type>(clauf::builtin_type::uint64);
+        return creator.create<clauf::builtin_type>(kind);
+
+    case clauf::builtin_type::sint32:
+        return creator.create<clauf::builtin_type>(clauf::builtin_type::uint32);
     case clauf::builtin_type::sint64:
         return creator.create<clauf::builtin_type>(clauf::builtin_type::uint64);
 
@@ -57,17 +61,39 @@ bool clauf::is_void(const type* ty)
 
 bool clauf::is_signed_int(const type* ty)
 {
-    if (auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty))
-        return builtin->type_kind() == clauf::builtin_type::sint64;
-    else
+    auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty);
+    if (builtin == nullptr)
         return false;
+
+    switch (builtin->type_kind())
+    {
+    case builtin_type::sint32:
+    case builtin_type::sint64:
+        return true;
+
+    case builtin_type::void_:
+    case builtin_type::uint32:
+    case builtin_type::uint64:
+        return false;
+    }
 }
 bool clauf::is_unsigned_int(const type* ty)
 {
-    if (auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty))
-        return builtin->type_kind() == clauf::builtin_type::uint64;
-    else
+    auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty);
+    if (builtin == nullptr)
         return false;
+
+    switch (builtin->type_kind())
+    {
+    case builtin_type::uint32:
+    case builtin_type::uint64:
+        return true;
+
+    case builtin_type::void_:
+    case builtin_type::sint32:
+    case builtin_type::sint64:
+        return false;
+    }
 }
 bool clauf::is_integer(const type* ty)
 {
@@ -100,6 +126,10 @@ unsigned clauf::integer_rank_of(const type* ty)
     auto kind = dryad::node_cast<clauf::builtin_type>(ty)->type_kind();
     switch (kind)
     {
+    case clauf::builtin_type::sint32:
+    case clauf::builtin_type::uint32:
+        return 32;
+
     case clauf::builtin_type::sint64:
     case clauf::builtin_type::uint64:
         return 64;
@@ -210,6 +240,12 @@ void dump_type(const clauf::type* ty)
             {
             case clauf::builtin_type::void_:
                 std::printf("void");
+                break;
+            case clauf::builtin_type::sint32:
+                std::printf("sint32");
+                break;
+            case clauf::builtin_type::uint32:
+                std::printf("uint32");
                 break;
             case clauf::builtin_type::sint64:
                 std::printf("sint64");

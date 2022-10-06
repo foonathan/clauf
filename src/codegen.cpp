@@ -46,6 +46,32 @@ struct context
     }
 };
 
+lauf_asm_type codegen_type(const clauf::type* ty)
+{
+    return dryad::visit_node_all(
+        ty,
+        [](const clauf::builtin_type* ty) {
+            switch (ty->type_kind())
+            {
+            case clauf::builtin_type::void_:
+                CLAUF_UNREACHABLE("not needed in lauf");
+
+            case clauf::builtin_type::sint32:
+                return lauf_lib_int_s32;
+            case clauf::builtin_type::uint32:
+                return lauf_lib_int_u32;
+            case clauf::builtin_type::sint64:
+                return lauf_lib_int_s64;
+            case clauf::builtin_type::uint64:
+                return lauf_lib_int_u64;
+            }
+        },
+        [](const clauf::function_type*) {
+            CLAUF_UNREACHABLE("not the type of a variable");
+            return lauf_asm_type_value;
+        });
+}
+
 template <typename Op>
 void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const clauf::type* ty)
 {
@@ -150,11 +176,12 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
     for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
     {
         // TODO: types other than int.
-        auto var = lauf_asm_build_local(b, LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
+        auto type = codegen_type((*iter)->type());
+        auto var  = lauf_asm_build_local(b, type.layout);
         local_vars.insert(*iter, var);
 
         lauf_asm_inst_local_addr(b, var);
-        lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+        lauf_asm_inst_store_field(b, type, 0);
     }
 
     lauf_asm_block* block_loop_end    = nullptr;
@@ -286,7 +313,8 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         dryad::ignore_node<clauf::function_decl>,
         [&](dryad::traverse_event_exit, const clauf::variable_decl* decl) {
             // TODO: handle types other than int
-            auto var = lauf_asm_build_local(b, LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
+            auto type = codegen_type(decl->type());
+            auto var  = lauf_asm_build_local(b, type.layout);
             local_vars.insert(decl, var);
 
             if (decl->has_initializer())
@@ -294,7 +322,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 // If we have an initializer, it has been visited already and its value pushed on
                 // top of the stack. Store the initial value in the local variable.
                 lauf_asm_inst_local_addr(b, var);
-                lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+                lauf_asm_inst_store_field(b, type, 0);
             }
         },
         //=== expression ===//
@@ -305,29 +333,31 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         [&](const clauf::identifier_expr* expr) {
             if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
             {
+                auto ty = codegen_type(var_decl->type());
                 if (auto local_var = local_vars.lookup(var_decl))
                 {
                     // Push the value of local_var onto the stack.
                     lauf_asm_inst_local_addr(b, *local_var);
-                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                    lauf_asm_inst_load_field(b, ty, 0);
                     return;
                 }
                 else if (auto global_var = ctx.globals.lookup(var_decl))
                 {
                     // Push the value of global_var onto the stack.
                     lauf_asm_inst_global_addr(b, *global_var);
-                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                    lauf_asm_inst_load_field(b, ty, 0);
                     return;
                 }
             }
             else if (auto param_decl
                      = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
             {
+                auto ty = codegen_type(param_decl->type());
                 if (auto local_var = local_vars.lookup(param_decl))
                 {
                     // Push the value of the parameter onto the stack.
                     lauf_asm_inst_local_addr(b, *local_var);
-                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                    lauf_asm_inst_load_field(b, ty, 0);
                     return;
                 }
             }
@@ -367,13 +397,55 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             }
             else if (clauf::is_unsigned_int(expr->type()))
             {
-                CLAUF_PRECONDITION(clauf::is_signed_int(expr->child()->type()));
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_stou(LAUF_LIB_INT_OVERFLOW_WRAP));
+                if (clauf::is_signed_int(expr->child()->type()))
+                    lauf_asm_inst_call_builtin(b, lauf_lib_int_stou(LAUF_LIB_INT_OVERFLOW_WRAP));
+                else
+                    // If it is also unsigned, then we don't need to do any conversion or overflow
+                    // checking. All stack values are 64 bit anyway, so we will never need to cast
+                    // between them.
+                    CLAUF_PRECONDITION(clauf::is_unsigned_int(expr->child()->type()));
             }
             else if (clauf::is_signed_int(expr->type()))
             {
-                CLAUF_PRECONDITION(clauf::is_unsigned_int(expr->child()->type()));
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_utos(LAUF_LIB_INT_OVERFLOW_PANIC));
+                if (clauf::is_unsigned_int(expr->child()->type()))
+                {
+                    lauf_asm_inst_call_builtin(b, lauf_lib_int_utos(LAUF_LIB_INT_OVERFLOW_PANIC));
+                }
+                else
+                {
+                    CLAUF_PRECONDITION(clauf::is_signed_int(expr->child()->type()));
+                    // Just check for overflow.
+                    auto target_rank = clauf::integer_rank_of(expr->type());
+                    auto source_rank = clauf::integer_rank_of(expr->child()->type());
+                    if (target_rank < source_rank)
+                    {
+                        switch (target_rank)
+                        {
+                        case 32:
+                            lauf_asm_inst_call_builtin(b, lauf_lib_int_s32_overflow);
+                            break;
+                        case 64:
+                            lauf_asm_inst_call_builtin(b, lauf_lib_int_s64_overflow);
+                            break;
+
+                        default:
+                            CLAUF_UNREACHABLE("forgot to add size");
+                        }
+
+                        auto overflow_block
+                            = lauf_asm_declare_block(b, lauf_asm_build_get_vstack_size(b) - 1);
+                        auto continue_block
+                            = lauf_asm_declare_block(b, lauf_asm_build_get_vstack_size(b) - 1);
+                        lauf_asm_inst_branch(b, overflow_block, continue_block);
+
+                        lauf_asm_build_block(b, overflow_block);
+                        // TODO: generate message
+                        lauf_asm_inst_null(b);
+                        lauf_asm_inst_panic(b);
+
+                        lauf_asm_build_block(b, continue_block);
+                    }
+                }
             }
             else
             {
@@ -535,9 +607,11 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
             // Push the address of the lvalue onto the stack.
             // TODO: only identifier_expr is an lvalue at the moment
+            auto type = lauf_asm_type_value;
             dryad::visit_node_all(expr->left(), [&](const clauf::identifier_expr* expr) {
                 if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
                 {
+                    type = codegen_type(var_decl->type());
                     if (auto local_var = local_vars.lookup(var_decl))
                     {
                         // Push the value of local_var onto the stack.
@@ -554,6 +628,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 else if (auto param_decl
                          = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
                 {
+                    type = codegen_type(param_decl->type());
                     if (auto local_var = local_vars.lookup(param_decl))
                     {
                         // Push the address of the parameter onto the stack.
@@ -565,7 +640,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 CLAUF_UNREACHABLE("we don't support anything else yet");
             });
             // Store the value into address.
-            lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+            lauf_asm_inst_store_field(b, type, 0);
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
@@ -621,8 +696,7 @@ lauf_asm_module* clauf::codegen(const ast& ast)
 
                 // TODO: types other than int
                 auto global
-                    = lauf_asm_add_global_zero_data(ctx.mod,
-                                                    LAUF_ASM_NATIVE_LAYOUT_OF(lauf_runtime_value));
+                    = lauf_asm_add_global_zero_data(ctx.mod, codegen_type(decl->type()).layout);
                 lauf_asm_set_global_debug_name(ctx.mod, global,
                                                decl->name().c_str(ctx.ast->symbols));
                 ctx.globals.insert(decl, global);
