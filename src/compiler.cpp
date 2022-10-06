@@ -1117,7 +1117,10 @@ struct declaration
                   {
                       auto decl     = create_non_init_declaration(state, decl_type, init->child());
                       auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
-                      var_decl->set_initializer(init->initializer());
+                      auto converted_init
+                          = do_assignment_conversion(state, state.ast.location_of(decl),
+                                                     decl->type(), init->initializer());
+                      var_decl->set_initializer(converted_init);
                       result.push_back(decl);
                   }
                   else
