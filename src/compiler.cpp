@@ -956,21 +956,15 @@ struct type_specifier_list
                       case clauf::type_specifier::signed_:
                           if (is_signed.has_value())
                               log_error();
-                          if (base_type == clauf::builtin_type::void_)
-                              log_error();
                           is_signed = true;
                           break;
                       case clauf::type_specifier::unsigned_:
                           if (is_signed.has_value())
                               log_error();
-                          if (base_type == clauf::builtin_type::void_)
-                              log_error();
                           is_signed = false;
                           break;
                       case clauf::type_specifier::short_:
                           if (short_count == 2)
-                              log_error();
-                          if (base_type == clauf::builtin_type::void_)
                               log_error();
                           ++short_count;
                           break;
@@ -979,13 +973,21 @@ struct type_specifier_list
                   switch (base_type.value_or(clauf::builtin_type::sint64))
                   {
                   case builtin_type::void_:
+                      if (is_signed.has_value())
+                          log_error();
+
                       return state.ast.types.lookup_or_create<clauf::builtin_type>(
                           clauf::builtin_type::void_);
+
                   case builtin_type::sint8:
+                      if (short_count > 0)
+                          log_error();
+
                       if (is_signed.value_or(true))
                           return state.ast.create(clauf::builtin_type::sint8);
                       else
                           return state.ast.create(clauf::builtin_type::uint8);
+
                   case builtin_type::sint64:
                       if (is_signed.value_or(true))
                       {
