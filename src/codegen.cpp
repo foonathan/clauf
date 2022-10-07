@@ -183,7 +183,6 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
     // we need to iterate in reverse order.
     for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
     {
-        // TODO: types other than int.
         auto type = codegen_type((*iter)->type());
         auto var  = lauf_asm_build_local(b, type.layout);
         local_vars.insert(*iter, var);
@@ -320,7 +319,6 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
         [&](dryad::traverse_event_exit, const clauf::variable_decl* decl) {
-            // TODO: handle types other than int
             auto type = codegen_type(decl->type());
             auto var  = lauf_asm_build_local(b, type.layout);
             local_vars.insert(decl, var);
@@ -427,6 +425,8 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                     auto source_rank = clauf::integer_rank_of(expr->child()->type());
                     if (target_rank < source_rank)
                     {
+                        // Check that the value fits in the target.
+                        // This pushes 0/1 onto the stack.
                         switch (target_rank)
                         {
                         case 8:
@@ -446,18 +446,10 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                             CLAUF_UNREACHABLE("forgot to add size");
                         }
 
-                        auto overflow_block
-                            = lauf_asm_declare_block(b, lauf_asm_build_get_vstack_size(b) - 1);
-                        auto continue_block
-                            = lauf_asm_declare_block(b, lauf_asm_build_get_vstack_size(b) - 1);
-                        lauf_asm_inst_branch(b, overflow_block, continue_block);
-
-                        lauf_asm_build_block(b, overflow_block);
-                        // TODO: generate message
-                        lauf_asm_inst_null(b);
-                        lauf_asm_inst_panic(b);
-
-                        lauf_asm_build_block(b, continue_block);
+                        // Panic on overflow.
+                        auto msg = lauf_asm_build_string_literal(b, "integer overflow");
+                        lauf_asm_inst_global_addr(b, msg);
+                        lauf_asm_inst_panic_if(b);
                     }
                 }
             }
