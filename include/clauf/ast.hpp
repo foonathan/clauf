@@ -20,6 +20,7 @@ namespace clauf
 enum class type_node_kind
 {
     builtin_type,
+    pointer_type,
     function_type,
 };
 
@@ -70,6 +71,19 @@ private:
     DRYAD_ATTRIBUTE_USER_DATA16(type_kind_t, type_kind_impl);
 };
 
+/// A pointer type.
+class pointer_type
+: public dryad::basic_node<type_node_kind::pointer_type, dryad::container_node<type>>
+{
+public:
+    explicit pointer_type(dryad::node_ctor ctor, type* pointee_type) : node_base(ctor)
+    {
+        insert_child_after(nullptr, pointee_type);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(type, pointee_type, nullptr)
+};
+
 /// A function type like int(void).
 class function_type
 : public dryad::basic_node<type_node_kind::function_type, dryad::container_node<type>>
@@ -86,7 +100,7 @@ public:
     DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), this)
 };
 
-struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, function_type>
+struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_type, function_type>
 {
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm& hasher, const builtin_type* n)
@@ -99,6 +113,9 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, function
         hasher.hash_scalar(kind);
     }
     template <typename HashAlgorithm>
+    static void hash(HashAlgorithm&, const pointer_type*)
+    {}
+    template <typename HashAlgorithm>
     static void hash(HashAlgorithm&, const function_type*)
     {}
 
@@ -109,6 +126,10 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, function
     static bool is_equal(const builtin_type* node, builtin_type::type_kind_t kind)
     {
         return node->type_kind() == kind;
+    }
+    static bool is_equal(const pointer_type*, const pointer_type*)
+    {
+        return true;
     }
     static bool is_equal(const function_type*, const function_type*)
     {
@@ -127,6 +148,7 @@ bool is_signed_int(const type* ty);
 bool is_unsigned_int(const type* ty);
 bool is_integer(const type* ty);
 bool is_arithmetic(const type* ty);
+bool is_pointer(const type* ty);
 bool is_scalar(const type* ty);
 
 bool is_complete_object_type(const type* ty);
@@ -722,6 +744,7 @@ enum class declarator_kind
 {
     name,
     function,
+    pointer,
 
     init,
 };
@@ -764,6 +787,18 @@ public:
 
 private:
     parameter_list _parameters;
+};
+
+class pointer_declarator
+: public dryad::basic_node<declarator_kind::pointer, dryad::container_node<declarator>>
+{
+public:
+    explicit pointer_declarator(dryad::node_ctor ctor, declarator* child) : node_base(ctor)
+    {
+        insert_child_after(nullptr, child);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(declarator, child, nullptr)
 };
 
 class init_declarator

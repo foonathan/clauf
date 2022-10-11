@@ -12,6 +12,9 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
         [&](const clauf::builtin_type* ty) -> clauf::type* {
             return creator.create<clauf::builtin_type>(ty->type_kind());
         },
+        [&](const clauf::pointer_type* ty) -> clauf::type* {
+            return creator.create<clauf::pointer_type>(clone(creator, ty->pointee_type()));
+        },
         [&](const clauf::function_type* ty) -> clauf::type* {
             clauf::type_list params;
             for (auto param : ty->parameters())
@@ -119,9 +122,14 @@ bool clauf::is_arithmetic(const type* ty)
     return is_integer(ty);
 }
 
+bool clauf::is_pointer(const type* ty)
+{
+    return dryad::node_has_kind<clauf::pointer_type>(ty);
+}
+
 bool clauf::is_scalar(const type* ty)
 {
-    return clauf::is_arithmetic(ty);
+    return clauf::is_arithmetic(ty) || clauf::is_pointer(ty);
 }
 
 bool clauf::is_complete_object_type(const type* ty)
@@ -176,6 +184,7 @@ clauf::name clauf::get_name(const declarator* decl)
     return dryad::visit_node_all(
         decl, [](const name_declarator* decl) { return decl->name(); },
         [](const function_declarator* decl) { return get_name(decl->child()); },
+        [](const pointer_declarator* decl) { return get_name(decl->child()); },
         [](const init_declarator* decl) { return get_name(decl->child()); });
 }
 
@@ -193,6 +202,12 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
     return dryad::visit_node_all(
         decl, //
         [&](const clauf::name_declarator*) { return decl_type; },
+        [&](const clauf::pointer_declarator* decl) {
+            auto child_type = get_type(types, decl->child(), decl_type);
+            return types.build([&](clauf::type_forest::node_creator creator) {
+                return creator.create<clauf::pointer_type>(clauf::clone(creator, child_type));
+            });
+        },
         [&](const clauf::function_declarator* decl) {
             return types.build([&](clauf::type_forest::node_creator creator) {
                 clauf::type_list parameter_types;
@@ -299,6 +314,7 @@ void dump_type(const clauf::type* ty)
                 break;
             }
         },
+        [](dryad::traverse_event_enter, const clauf::pointer_type*) { std::printf("* "); },
         [](dryad::child_visitor<clauf::type_node_kind> visitor, const clauf::function_type* ty) {
             std::printf("(");
             for (auto param : ty->parameters())

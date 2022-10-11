@@ -111,10 +111,17 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
     if (clauf::is_same(target_type, value->type()))
         return value;
 
-    // TODO: this is done from memory, find the place in the spec where implicit conversions are
-    // specified.
     if (clauf::is_arithmetic(target_type) && clauf::is_arithmetic(value->type()))
         return state.ast.create<clauf::cast_expr>(loc, target_type, value);
+    else if (clauf::is_pointer(target_type) && clauf::is_pointer(value->type()))
+    {
+        auto target_pointee_type
+            = dryad::node_cast<clauf::pointer_type>(target_type)->pointee_type();
+        auto value_pointee_type
+            = dryad::node_cast<clauf::pointer_type>(value->type())->pointee_type();
+        if (clauf::is_void(target_pointee_type) || clauf::is_void(value_pointee_type))
+            return state.ast.create<clauf::cast_expr>(loc, target_type, value);
+    }
 
     state.logger.log(clauf::diagnostic_kind::error, "cannot do implicit conversion in assignment")
         .annotation(clauf::annotation_kind::primary, loc, "here")
@@ -1048,7 +1055,13 @@ struct declarator : lexy::expression_production
         using operand = dsl::atom;
     };
 
-    using operation = function_declarator;
+    struct pointer_declarator : dsl::prefix_op
+    {
+        static constexpr auto op = dsl::op<pointer_declarator>(dsl::lit_c<'*'>);
+        using operand            = function_declarator;
+    };
+
+    using operation = pointer_declarator;
 
     static constexpr auto value = callback<clauf::declarator*>( //
         [](const compiler_state&, clauf::declarator* decl) { return decl; },
@@ -1069,6 +1082,9 @@ struct declarator : lexy::expression_production
         [](compiler_state& state, clauf::declarator* child, function_declarator,
            clauf::parameter_list params) {
             return state.decl_tree.create<clauf::function_declarator>(child, params);
+        },
+        [](compiler_state& state, pointer_declarator, clauf::declarator* child) {
+            return state.decl_tree.create<clauf::pointer_declarator>(child);
         });
 };
 
@@ -1135,6 +1151,9 @@ struct declaration
                         .finish();
                 }
 
+                return state.ast.create<clauf::variable_decl>(name.loc, name.symbol, type);
+            },
+            [&](const clauf::pointer_declarator*) -> clauf::decl* {
                 return state.ast.create<clauf::variable_decl>(name.loc, name.symbol, type);
             },
             [&](const clauf::function_declarator* decl) -> clauf::decl* {

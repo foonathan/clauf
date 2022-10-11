@@ -75,6 +75,7 @@ lauf_asm_type codegen_type(const clauf::type* ty)
                 return lauf_lib_int_u64;
             }
         },
+        [](const clauf::pointer_type*) { return lauf_asm_type_value; },
         [](const clauf::function_type*) {
             CLAUF_UNREACHABLE("not the type of a variable");
             return lauf_asm_type_value;
@@ -491,6 +492,10 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                         lauf_asm_inst_panic_if(b);
                     }
                 }
+            }
+            else if (clauf::is_pointer(expr->type()) && clauf::is_pointer(expr->child()->type()))
+            {
+                // We don't need to do anything, pointers in lauf aren't typed.
             }
             else
             {
