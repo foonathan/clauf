@@ -612,7 +612,7 @@ struct expr : lexy::expression_production
                     .finish();
             }
 
-            // TODO: promote type
+            child     = do_integer_promotion(state, op.loc, child);
             auto type = op == unary_op::lnot ? state.ast.create(clauf::builtin_type::sint64)
                                              : child->type();
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
