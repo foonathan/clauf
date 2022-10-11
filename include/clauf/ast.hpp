@@ -338,6 +338,7 @@ enum class unary_op : std::uint16_t
     post_dec, // tmp--
 
     address, // &
+    deref,   // *
 };
 
 /// A unary expression.

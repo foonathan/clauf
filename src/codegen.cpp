@@ -157,221 +157,58 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const clauf::type* ty)
     }
 }
 
+void codegen_expr(context& ctx, const clauf::expr* expr);
+
 // Evalutes the expression as an lvalue and returns its type.
 lauf_asm_type codegen_lvalue(context& ctx, const clauf::expr* expr)
 {
     auto b    = ctx.builder;
     auto type = lauf_asm_type_value;
-    dryad::visit_node_all(expr, [&](const clauf::identifier_expr* expr) {
-        if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
-        {
-            type = codegen_type(var_decl->type());
-            if (auto local_var = ctx.local_vars.lookup(var_decl))
+    dryad::visit_node_all(
+        expr,
+        [&](const clauf::identifier_expr* expr) {
+            if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
             {
-                // Push the value of local_var onto the stack.
-                lauf_asm_inst_local_addr(b, *local_var);
-                return;
+                type = codegen_type(var_decl->type());
+                if (auto local_var = ctx.local_vars.lookup(var_decl))
+                {
+                    // Push the value of local_var onto the stack.
+                    lauf_asm_inst_local_addr(b, *local_var);
+                    return;
+                }
+                else if (auto global_var = ctx.globals.lookup(var_decl))
+                {
+                    // Push the value of global_var onto the stack.
+                    lauf_asm_inst_global_addr(b, *global_var);
+                    return;
+                }
             }
-            else if (auto global_var = ctx.globals.lookup(var_decl))
+            else if (auto param_decl
+                     = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
             {
-                // Push the value of global_var onto the stack.
-                lauf_asm_inst_global_addr(b, *global_var);
-                return;
+                type = codegen_type(param_decl->type());
+                if (auto local_var = ctx.local_vars.lookup(param_decl))
+                {
+                    // Push the address of the parameter onto the stack.
+                    lauf_asm_inst_local_addr(b, *local_var);
+                    return;
+                }
             }
-        }
-        else if (auto param_decl = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
-        {
-            type = codegen_type(param_decl->type());
-            if (auto local_var = ctx.local_vars.lookup(param_decl))
-            {
-                // Push the address of the parameter onto the stack.
-                lauf_asm_inst_local_addr(b, *local_var);
-                return;
-            }
-        }
 
-        CLAUF_UNREACHABLE("we don't support anything else yet");
-    });
+            CLAUF_UNREACHABLE("we don't support anything else yet");
+        },
+        [&](const clauf::unary_expr* expr) {
+            // To evaluate a pointer as an lvalue, we don't actually want to dereference it.
+            codegen_expr(ctx, expr->child());
+        });
     return type;
 }
 
-lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* decl)
+void codegen_expr(context& ctx, const clauf::expr* expr)
 {
-    std::vector<const clauf::parameter_decl*> params;
-    for (auto param : decl->parameters())
-        params.push_back(param);
-    auto parameter_count = params.size();
-
-    auto return_count = clauf::is_void(decl->type()->return_type()) ? 0 : 1;
-
-    auto name = decl->name().c_str(ctx.ast->symbols);
-    auto fn   = lauf_asm_add_function(ctx.mod, name,
-                                      {static_cast<std::uint8_t>(parameter_count),
-                                       static_cast<std::uint8_t>(return_count)});
-    ctx.functions.insert(decl, fn);
-
-    ctx.local_vars = {};
-
     auto b = ctx.builder;
-    lauf_asm_build(b, ctx.mod, fn);
-
-    auto entry = lauf_asm_declare_block(b, static_cast<std::uint8_t>(parameter_count));
-    lauf_asm_build_block(b, entry);
-
-    // We create variables for all parameters and store the value into them.
-    // Since parameters have been pushed onto the stack and are thus popped in reverse,
-    // we need to iterate in reverse order.
-    for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
-    {
-        auto type = codegen_type((*iter)->type());
-        auto var  = lauf_asm_build_local(b, type.layout);
-        ctx.local_vars.insert(*iter, var);
-
-        lauf_asm_inst_local_addr(b, var);
-        lauf_asm_inst_store_field(b, type, 0);
-    }
-
-    lauf_asm_block* block_loop_end    = nullptr;
-    lauf_asm_block* block_loop_header = nullptr;
     dryad::visit_tree(
-        decl->body(),
-        //=== statements ===//
-        [&, anchor = lexy::input_location_anchor(ctx.ast->input.buffer)] //
-        (dryad::traverse_event_enter, const clauf::stmt* stmt) mutable {
-            // Generate debug location for all instructions generated by a statement.
-            auto location = ctx.ast->location_of(stmt);
-            auto expanded_location
-                = lexy::get_input_location(ctx.ast->input.buffer, location.begin, anchor);
-
-            lauf_asm_build_debug_location(b, {std::uint16_t(expanded_location.line_nr()),
-                                              std::uint16_t(expanded_location.column_nr()), false});
-
-            anchor = expanded_location.anchor();
-        },
-        [&](dryad::traverse_event_exit, const clauf::expr_stmt*) {
-            // The underlying expression has been visited, and we need to remove its value from
-            // the stack -- if the expression did not do that for us already.
-            if (lauf_asm_build_get_vstack_size(b) == 1)
-                lauf_asm_inst_pop(b, 0);
-        },
-        [&](dryad::traverse_event_exit, const clauf::builtin_stmt* stmt) {
-            // The underlying expression has been visited, and pushed its value onto the stack.
-            switch (stmt->builtin())
-            {
-            case clauf::builtin_stmt::print:
-                // Print the value on top of the stack.
-                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
-                // Remove the value after we have printed it.
-                lauf_asm_inst_pop(b, 0);
-                break;
-            case clauf::builtin_stmt::assert:
-                // Assert that the value is non-zero.
-                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
-                break;
-            }
-        },
-        [&](dryad::traverse_event_exit, const clauf::return_stmt*) {
-            // The underlying expression has been visited, and we return.
-            lauf_asm_inst_return(b);
-        },
-        [&](const clauf::break_stmt*) {
-            CLAUF_ASSERT(block_loop_end != nullptr, "break statement outside of loop");
-            lauf_asm_inst_jump(b, block_loop_end);
-        },
-        [&](const clauf::continue_stmt*) {
-            CLAUF_ASSERT(block_loop_header != nullptr, "continue statement outside of loop");
-            lauf_asm_inst_jump(b, block_loop_header);
-        },
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::if_stmt* stmt) {
-            auto block_if_true  = lauf_asm_declare_block(b, 0);
-            auto block_if_false = lauf_asm_declare_block(b, 0);
-            auto block_end      = lauf_asm_declare_block(b, 0);
-
-            // Evaluate the condition.
-            visitor(stmt->condition());
-            // Now 0/1 is on top of the stack.
-            // Branch to one of the basic blocks.
-            auto const_target = lauf_asm_inst_branch(b, block_if_true, block_if_false);
-
-            if (const_target != block_if_false)
-            {
-                // Evaluate the then statement.
-                lauf_asm_build_block(b, block_if_true);
-                visitor(stmt->then());
-                lauf_asm_inst_jump(b, block_end);
-            }
-
-            if (const_target != block_if_true)
-            {
-                // Evaluate the else statement.
-                lauf_asm_build_block(b, block_if_false);
-                if (stmt->has_else())
-                    visitor(stmt->else_());
-                lauf_asm_inst_jump(b, block_end);
-            }
-
-            // Continue, but in the new block.
-            lauf_asm_build_block(b, block_end);
-        },
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::while_stmt* stmt) {
-            // loop_header:
-            //      evaluate condition
-            //      branch to loop_end or loop_body
-            // loop_body:
-            //      evaluate body
-            //      jump to loop_header
-            // loop_end:
-            //      continue with rest of the program
-
-            auto prev_loop_header = block_loop_header;
-            auto prev_loop_end    = block_loop_end;
-
-            block_loop_header    = lauf_asm_declare_block(b, 0);
-            auto block_loop_body = lauf_asm_declare_block(b, 0);
-            block_loop_end       = lauf_asm_declare_block(b, 0);
-
-            switch (stmt->loop_kind())
-            {
-            case clauf::while_stmt::loop_while:
-                // For a while loop we need to check the loop header first.
-                lauf_asm_inst_jump(b, block_loop_header);
-                break;
-            case clauf::while_stmt::loop_do_while:
-                // For a do while loop we need to execute the body once first.
-                lauf_asm_inst_jump(b, block_loop_body);
-            }
-
-            // Evaluate condition in loop header and branch.
-            lauf_asm_build_block(b, block_loop_header);
-            visitor(stmt->condition());
-            lauf_asm_inst_branch(b, block_loop_body, block_loop_end);
-
-            // Evaluate body.
-            lauf_asm_build_block(b, block_loop_body);
-            visitor(stmt->body());
-            lauf_asm_inst_jump(b, block_loop_header);
-
-            // Continue on with the rest.
-            lauf_asm_build_block(b, block_loop_end);
-            block_loop_header = prev_loop_header;
-            block_loop_end    = prev_loop_end;
-        },
-        //=== declarations ===//
-        dryad::ignore_node<clauf::function_decl>,
-        [&](dryad::traverse_event_exit, const clauf::variable_decl* decl) {
-            auto type = codegen_type(decl->type());
-            auto var  = lauf_asm_build_local(b, type.layout);
-            ctx.local_vars.insert(decl, var);
-
-            if (decl->has_initializer())
-            {
-                // If we have an initializer, it has been visited already and its value pushed on
-                // top of the stack. Store the initial value in the local variable.
-                lauf_asm_inst_local_addr(b, var);
-                lauf_asm_inst_store_field(b, type, 0);
-            }
-        },
-        //=== expression ===//
+        expr,
         [&](const clauf::integer_constant_expr* expr) {
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
@@ -570,6 +407,11 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 lauf_asm_inst_pop(b, 0);
                 codegen_lvalue(ctx, expr->child());
                 break;
+            case clauf::unary_op::deref:
+                // The address is on top of the stack.
+                // Load its value.
+                lauf_asm_inst_load_field(b, codegen_type(expr->type()), 0);
+                break;
             }
         },
         [&](dryad::traverse_event_exit, const clauf::arithmetic_expr* expr) {
@@ -734,6 +576,188 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
             // Continue, but in the new block.
             lauf_asm_build_block(b, block_end);
+        });
+}
+
+lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* decl)
+{
+    std::vector<const clauf::parameter_decl*> params;
+    for (auto param : decl->parameters())
+        params.push_back(param);
+    auto parameter_count = params.size();
+
+    auto return_count = clauf::is_void(decl->type()->return_type()) ? 0 : 1;
+
+    auto name = decl->name().c_str(ctx.ast->symbols);
+    auto fn   = lauf_asm_add_function(ctx.mod, name,
+                                      {static_cast<std::uint8_t>(parameter_count),
+                                       static_cast<std::uint8_t>(return_count)});
+    ctx.functions.insert(decl, fn);
+
+    ctx.local_vars = {};
+
+    auto b = ctx.builder;
+    lauf_asm_build(b, ctx.mod, fn);
+
+    auto entry = lauf_asm_declare_block(b, static_cast<std::uint8_t>(parameter_count));
+    lauf_asm_build_block(b, entry);
+
+    // We create variables for all parameters and store the value into them.
+    // Since parameters have been pushed onto the stack and are thus popped in reverse,
+    // we need to iterate in reverse order.
+    for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
+    {
+        auto type = codegen_type((*iter)->type());
+        auto var  = lauf_asm_build_local(b, type.layout);
+        ctx.local_vars.insert(*iter, var);
+
+        lauf_asm_inst_local_addr(b, var);
+        lauf_asm_inst_store_field(b, type, 0);
+    }
+
+    lauf_asm_block* block_loop_end    = nullptr;
+    lauf_asm_block* block_loop_header = nullptr;
+    dryad::visit_tree(
+        decl->body(),
+        //=== statements ===//
+        [&, anchor = lexy::input_location_anchor(ctx.ast->input.buffer)] //
+        (dryad::traverse_event_enter, const clauf::stmt* stmt) mutable {
+            // Generate debug location for all instructions generated by a statement.
+            auto location = ctx.ast->location_of(stmt);
+            auto expanded_location
+                = lexy::get_input_location(ctx.ast->input.buffer, location.begin, anchor);
+
+            lauf_asm_build_debug_location(b, {std::uint16_t(expanded_location.line_nr()),
+                                              std::uint16_t(expanded_location.column_nr()), false});
+
+            anchor = expanded_location.anchor();
+        },
+        [&](dryad::traverse_event_exit, const clauf::expr_stmt*) {
+            // The underlying expression has been visited, and we need to remove its value from
+            // the stack -- if the expression did not do that for us already.
+            if (lauf_asm_build_get_vstack_size(b) == 1)
+                lauf_asm_inst_pop(b, 0);
+        },
+        [&](dryad::traverse_event_exit, const clauf::builtin_stmt* stmt) {
+            // The underlying expression has been visited, and pushed its value onto the stack.
+            switch (stmt->builtin())
+            {
+            case clauf::builtin_stmt::print:
+                // Print the value on top of the stack.
+                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
+                // Remove the value after we have printed it.
+                lauf_asm_inst_pop(b, 0);
+                break;
+            case clauf::builtin_stmt::assert:
+                // Assert that the value is non-zero.
+                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
+                break;
+            }
+        },
+        [&](dryad::traverse_event_exit, const clauf::return_stmt*) {
+            // The underlying expression has been visited, and we return.
+            lauf_asm_inst_return(b);
+        },
+        [&](const clauf::break_stmt*) {
+            CLAUF_ASSERT(block_loop_end != nullptr, "break statement outside of loop");
+            lauf_asm_inst_jump(b, block_loop_end);
+        },
+        [&](const clauf::continue_stmt*) {
+            CLAUF_ASSERT(block_loop_header != nullptr, "continue statement outside of loop");
+            lauf_asm_inst_jump(b, block_loop_header);
+        },
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::if_stmt* stmt) {
+            auto block_if_true  = lauf_asm_declare_block(b, 0);
+            auto block_if_false = lauf_asm_declare_block(b, 0);
+            auto block_end      = lauf_asm_declare_block(b, 0);
+
+            // Evaluate the condition.
+            visitor(stmt->condition());
+            // Now 0/1 is on top of the stack.
+            // Branch to one of the basic blocks.
+            auto const_target = lauf_asm_inst_branch(b, block_if_true, block_if_false);
+
+            if (const_target != block_if_false)
+            {
+                // Evaluate the then statement.
+                lauf_asm_build_block(b, block_if_true);
+                visitor(stmt->then());
+                lauf_asm_inst_jump(b, block_end);
+            }
+
+            if (const_target != block_if_true)
+            {
+                // Evaluate the else statement.
+                lauf_asm_build_block(b, block_if_false);
+                if (stmt->has_else())
+                    visitor(stmt->else_());
+                lauf_asm_inst_jump(b, block_end);
+            }
+
+            // Continue, but in the new block.
+            lauf_asm_build_block(b, block_end);
+        },
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::while_stmt* stmt) {
+            // loop_header:
+            //      evaluate condition
+            //      branch to loop_end or loop_body
+            // loop_body:
+            //      evaluate body
+            //      jump to loop_header
+            // loop_end:
+            //      continue with rest of the program
+
+            auto prev_loop_header = block_loop_header;
+            auto prev_loop_end    = block_loop_end;
+
+            block_loop_header    = lauf_asm_declare_block(b, 0);
+            auto block_loop_body = lauf_asm_declare_block(b, 0);
+            block_loop_end       = lauf_asm_declare_block(b, 0);
+
+            switch (stmt->loop_kind())
+            {
+            case clauf::while_stmt::loop_while:
+                // For a while loop we need to check the loop header first.
+                lauf_asm_inst_jump(b, block_loop_header);
+                break;
+            case clauf::while_stmt::loop_do_while:
+                // For a do while loop we need to execute the body once first.
+                lauf_asm_inst_jump(b, block_loop_body);
+            }
+
+            // Evaluate condition in loop header and branch.
+            lauf_asm_build_block(b, block_loop_header);
+            visitor(stmt->condition());
+            lauf_asm_inst_branch(b, block_loop_body, block_loop_end);
+
+            // Evaluate body.
+            lauf_asm_build_block(b, block_loop_body);
+            visitor(stmt->body());
+            lauf_asm_inst_jump(b, block_loop_header);
+
+            // Continue on with the rest.
+            lauf_asm_build_block(b, block_loop_end);
+            block_loop_header = prev_loop_header;
+            block_loop_end    = prev_loop_end;
+        },
+        //=== declarations ===//
+        dryad::ignore_node<clauf::function_decl>,
+        [&](dryad::traverse_event_exit, const clauf::variable_decl* decl) {
+            auto type = codegen_type(decl->type());
+            auto var  = lauf_asm_build_local(b, type.layout);
+            ctx.local_vars.insert(decl, var);
+
+            if (decl->has_initializer())
+            {
+                // If we have an initializer, it has been visited already and its value pushed on
+                // top of the stack. Store the initial value in the local variable.
+                lauf_asm_inst_local_addr(b, var);
+                lauf_asm_inst_store_field(b, type, 0);
+            }
+        },
+        //=== expression ===//
+        [&](dryad::child_visitor<clauf::node_kind>, const clauf::expr* expr) {
+            codegen_expr(ctx, expr);
         });
 
     lauf_asm_build_debug_location(b, {0, 0, true});

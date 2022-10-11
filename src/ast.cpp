@@ -171,7 +171,12 @@ unsigned clauf::integer_rank_of(const type* ty)
 
 bool clauf::is_lvalue(const expr* e)
 {
-    return dryad::node_has_kind<clauf::identifier_expr>(e);
+    if (dryad::node_has_kind<clauf::identifier_expr>(e))
+        return true;
+    else if (auto unary = dryad::node_try_cast<clauf::unary_expr>(e))
+        return unary->op() == clauf::unary_op::deref;
+    else
+        return false;
 }
 
 bool clauf::is_modifiable_lvalue(const expr* e)
@@ -383,6 +388,8 @@ void clauf::dump_ast(const ast& ast)
 
                 case unary_op::address:
                     std::printf("&");
+                case unary_op::deref:
+                    std::printf("*");
                 }
                 std::printf(" : ");
                 dump_type(expr->type());

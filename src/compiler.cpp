@@ -433,7 +433,8 @@ struct expr : lexy::expression_production
                                    / op_<clauf::unary_op::lnot>(LEXY_LIT("!"))
                                    / op_<clauf::unary_op::pre_inc>(LEXY_LIT("++"))
                                    / op_<clauf::unary_op::pre_dec>(LEXY_LIT("--"))
-                                   / op_<clauf::unary_op::address>(LEXY_LIT("&"));
+                                   / op_<clauf::unary_op::address>(LEXY_LIT("&"))
+                                   / op_<clauf::unary_op::deref>(LEXY_LIT("*"));
         using operand = postfix;
     };
 
@@ -550,6 +551,8 @@ struct expr : lexy::expression_production
                 return clauf::is_arithmetic(child->type()) && clauf::is_modifiable_lvalue(child);
             case clauf::unary_op::address:
                 return clauf::is_lvalue(child);
+            case clauf::unary_op::deref:
+                return clauf::is_pointer(child->type());
             }
         }();
         if (!is_valid_type)
@@ -564,6 +567,11 @@ struct expr : lexy::expression_production
             auto type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
                 return creator.create<clauf::pointer_type>(clauf::clone(creator, child->type()));
             });
+            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+        }
+        else if (op == clauf::unary_op::deref)
+        {
+            auto type = dryad::node_cast<clauf::pointer_type>(child->type())->pointee_type();
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
         }
         else if (op == clauf::unary_op::lnot)
