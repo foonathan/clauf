@@ -412,8 +412,10 @@ struct expr : lexy::expression_production
 
     struct postfix : dsl::postfix_op
     {
-        static constexpr auto op = op_(LEXY_LIT("(") >> dsl::p<argument_list>);
-        using operand            = dsl::atom;
+        static constexpr auto op = op_(LEXY_LIT("(") >> dsl::p<argument_list>)
+                                   / op_<clauf::unary_op::post_inc>(LEXY_LIT("++"))
+                                   / op_<clauf::unary_op::post_dec>(LEXY_LIT("--"));
+        using operand = dsl::atom;
     };
 
     struct unary : dsl::prefix_op
@@ -421,7 +423,9 @@ struct expr : lexy::expression_production
         static constexpr auto op = op_<clauf::unary_op::plus>(LEXY_LIT("+"))
                                    / op_<clauf::unary_op::neg>(LEXY_LIT("-"))
                                    / op_<clauf::unary_op::bnot>(LEXY_LIT("~"))
-                                   / op_<clauf::unary_op::lnot>(LEXY_LIT("!"));
+                                   / op_<clauf::unary_op::lnot>(LEXY_LIT("!"))
+                                   / op_<clauf::unary_op::pre_inc>(LEXY_LIT("++"))
+                                   / op_<clauf::unary_op::pre_dec>(LEXY_LIT("--"));
         using operand = postfix;
     };
 
@@ -518,6 +522,44 @@ struct expr : lexy::expression_production
         using operand            = assignment;
     };
 
+    static clauf::expr* create_unary(compiler_state& state, op_tag<clauf::unary_op> op,
+                                     clauf::expr* child)
+    {
+        auto is_valid_type = [&] {
+            switch (op)
+            {
+            case unary_op::plus:
+            case unary_op::neg:
+                return clauf::is_arithmetic(child->type());
+            case unary_op::bnot:
+                return clauf::is_integer(child->type());
+            case unary_op::lnot:
+                return clauf::is_scalar(child->type());
+            case clauf::unary_op::pre_inc:
+            case clauf::unary_op::pre_dec:
+            case clauf::unary_op::post_inc:
+            case clauf::unary_op::post_dec:
+                return clauf::is_arithmetic(child->type()) && clauf::is_modifiable_lvalue(child);
+            }
+        }();
+        if (!is_valid_type)
+        {
+            state.logger.log(clauf::diagnostic_kind::error, "invalid type for unary operator")
+                .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                .finish();
+        }
+
+        // For increment/decrement, we need to do the usual artihmetic conversions between
+        // `child` and the number 1. However, if we assume that 1 already has the correct type,
+        // this just does integer promotion on `child`, so we can just call that instead.
+        //
+        // For the other unary operators, integer promotion is what we need to do anyway.
+        child = do_integer_promotion(state, op.loc, child);
+        auto type
+            = op == unary_op::lnot ? state.ast.create(clauf::builtin_type::sint64) : child->type();
+        return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+    }
+
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
         [](const compiler_state&, const char*, clauf::expr* expr) { return expr; },
@@ -592,30 +634,11 @@ struct expr : lexy::expression_production
             return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
                                                                converted_arguments);
         },
+        [](compiler_state& state, clauf::expr* child, op_tag<clauf::unary_op> op) {
+            return create_unary(state, op, child);
+        },
         [](compiler_state& state, op_tag<clauf::unary_op> op, clauf::expr* child) {
-            auto is_valid_type = [&] {
-                switch (op)
-                {
-                case unary_op::plus:
-                case unary_op::neg:
-                    return clauf::is_arithmetic(child->type());
-                case unary_op::bnot:
-                    return clauf::is_integer(child->type());
-                case unary_op::lnot:
-                    return clauf::is_scalar(child->type());
-                }
-            }();
-            if (!is_valid_type)
-            {
-                state.logger.log(clauf::diagnostic_kind::error, "invalid type for unary operator")
-                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
-                    .finish();
-            }
-
-            child     = do_integer_promotion(state, op.loc, child);
-            auto type = op == unary_op::lnot ? state.ast.create(clauf::builtin_type::sint64)
-                                             : child->type();
-            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+            return create_unary(state, op, child);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {

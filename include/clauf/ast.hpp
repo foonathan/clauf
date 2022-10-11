@@ -309,6 +309,11 @@ enum class unary_op : std::uint16_t
     neg,  // -
     bnot, // ~
     lnot, // !
+
+    pre_inc,  // ++tmp
+    pre_dec,  // --tmp
+    post_inc, // tmp++
+    post_dec, // tmp--
 };
 
 /// A unary expression.

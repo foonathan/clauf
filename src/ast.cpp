@@ -351,6 +351,19 @@ void clauf::dump_ast(const ast& ast)
                 case unary_op::lnot:
                     std::printf("!");
                     break;
+
+                case unary_op::pre_inc:
+                    std::printf("++ (pre)");
+                    break;
+                case unary_op::pre_dec:
+                    std::printf("-- (pre)");
+                    break;
+                case unary_op::post_inc:
+                    std::printf("++ (post)");
+                    break;
+                case unary_op::post_dec:
+                    std::printf("-- (post)");
+                    break;
                 }
                 std::printf(" : ");
                 dump_type(expr->type());
