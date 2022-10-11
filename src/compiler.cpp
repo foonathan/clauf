@@ -691,7 +691,14 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
-            // TODO: assert that left is an lvalue
+            if (!clauf::is_modifiable_lvalue(left))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "lhs of assignment is not a modifiable lvalue")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
             right = do_assignment_conversion(state, op.loc, left->type(), right);
             return state.ast.create<clauf::assignment_expr>(op.loc, left->type(), op, left, right);
         },

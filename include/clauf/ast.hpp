@@ -235,6 +235,9 @@ private:
     const clauf::type* _type;
 };
 
+bool is_lvalue(const expr* e);
+bool is_modifiable_lvalue(const expr* e);
+
 using expr_list = dryad::unlinked_node_list<expr>;
 
 class integer_constant_expr : public dryad::basic_node<node_kind::integer_constant_expr, expr>

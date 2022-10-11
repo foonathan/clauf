@@ -161,6 +161,16 @@ unsigned clauf::integer_rank_of(const type* ty)
     }
 }
 
+bool clauf::is_lvalue(const expr* e)
+{
+    return dryad::node_has_kind<clauf::identifier_expr>(e);
+}
+
+bool clauf::is_modifiable_lvalue(const expr* e)
+{
+    return is_lvalue(e) && is_complete_object_type(e->type());
+}
+
 clauf::name clauf::get_name(const declarator* decl)
 {
     return dryad::visit_node_all(
