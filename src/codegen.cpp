@@ -564,6 +564,12 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                 // At this point, the old value is on the stack.
                 break;
             }
+
+            case clauf::unary_op::address:
+                // Remove the value of the child expression and push its address instead.
+                lauf_asm_inst_pop(b, 0);
+                codegen_lvalue(ctx, expr->child());
+                break;
             }
         },
         [&](dryad::traverse_event_exit, const clauf::arithmetic_expr* expr) {

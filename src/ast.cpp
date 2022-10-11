@@ -380,6 +380,9 @@ void clauf::dump_ast(const ast& ast)
                 case unary_op::post_dec:
                     std::printf("-- (post)");
                     break;
+
+                case unary_op::address:
+                    std::printf("&");
                 }
                 std::printf(" : ");
                 dump_type(expr->type());

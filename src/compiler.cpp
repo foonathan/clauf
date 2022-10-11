@@ -432,7 +432,8 @@ struct expr : lexy::expression_production
                                    / op_<clauf::unary_op::bnot>(LEXY_LIT("~"))
                                    / op_<clauf::unary_op::lnot>(LEXY_LIT("!"))
                                    / op_<clauf::unary_op::pre_inc>(LEXY_LIT("++"))
-                                   / op_<clauf::unary_op::pre_dec>(LEXY_LIT("--"));
+                                   / op_<clauf::unary_op::pre_dec>(LEXY_LIT("--"))
+                                   / op_<clauf::unary_op::address>(LEXY_LIT("&"));
         using operand = postfix;
     };
 
@@ -547,6 +548,8 @@ struct expr : lexy::expression_production
             case clauf::unary_op::post_inc:
             case clauf::unary_op::post_dec:
                 return clauf::is_arithmetic(child->type()) && clauf::is_modifiable_lvalue(child);
+            case clauf::unary_op::address:
+                return clauf::is_lvalue(child);
             }
         }();
         if (!is_valid_type)
@@ -556,15 +559,31 @@ struct expr : lexy::expression_production
                 .finish();
         }
 
-        // For increment/decrement, we need to do the usual artihmetic conversions between
-        // `child` and the number 1. However, if we assume that 1 already has the correct type,
-        // this just does integer promotion on `child`, so we can just call that instead.
-        //
-        // For the other unary operators, integer promotion is what we need to do anyway.
-        child = do_integer_promotion(state, op.loc, child);
-        auto type
-            = op == unary_op::lnot ? state.ast.create(clauf::builtin_type::sint64) : child->type();
-        return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+        if (op == clauf::unary_op::address)
+        {
+            auto type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
+                return creator.create<clauf::pointer_type>(clauf::clone(creator, child->type()));
+            });
+            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+        }
+        else if (op == clauf::unary_op::lnot)
+        {
+            // We need to do integer promotion as it's defined in terms of ==, which does integer
+            // promotion.
+            child     = do_integer_promotion(state, op.loc, child);
+            auto type = state.ast.create(clauf::builtin_type::sint64);
+            return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
+        }
+        else
+        {
+            // For increment/decrement, we need to do the usual artihmetic conversions between
+            // `child` and the number 1. However, if we assume that 1 already has the correct type,
+            // this just does integer promotion on `child`, so we can just call that instead.
+            //
+            // For the other unary operators, integer promotion is what we need to do anyway.
+            child = do_integer_promotion(state, op.loc, child);
+            return state.ast.create<clauf::unary_expr>(op.loc, child->type(), op, child);
+        }
     }
 
     static constexpr auto value = callback<clauf::expr*>( //
