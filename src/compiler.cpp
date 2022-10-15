@@ -1075,20 +1075,20 @@ struct declarator : lexy::expression_production
     static constexpr auto atom = dsl::parenthesized(dsl::recurse<declarator<Abstract>>)
                                  | dsl::p<grammar::identifier<false>> | dsl::else_ >> dsl::position;
 
+    struct pointer_declarator : dsl::prefix_op
+    {
+        static constexpr auto op = dsl::op<pointer_declarator>(dsl::lit_c<'*'>);
+        using operand            = dsl::atom;
+    };
+
     struct function_declarator : dsl::postfix_op
     {
         static constexpr auto op
             = dsl::op<function_declarator>(LEXY_LIT("(") >> dsl::recurse<parameter_list>);
-        using operand = dsl::atom;
+        using operand = pointer_declarator;
     };
 
-    struct pointer_declarator : dsl::prefix_op
-    {
-        static constexpr auto op = dsl::op<pointer_declarator>(dsl::lit_c<'*'>);
-        using operand            = function_declarator;
-    };
-
-    using operation = pointer_declarator;
+    using operation = function_declarator;
 
     static constexpr auto value = callback<clauf::declarator*>( //
         [](const compiler_state&, clauf::declarator* decl) { return decl; },
