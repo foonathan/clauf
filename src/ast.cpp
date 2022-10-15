@@ -219,7 +219,7 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
                 for (auto param : decl->parameters())
                     parameter_types.push_back(clauf::clone(creator, param->type()));
 
-                auto return_type = clauf::clone(creator, decl_type);
+                auto return_type = clauf::clone(creator, get_type(types, decl->child(), decl_type));
                 return creator.create<clauf::function_type>(return_type, parameter_types);
             });
         },
