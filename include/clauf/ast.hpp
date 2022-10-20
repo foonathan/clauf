@@ -167,6 +167,7 @@ enum class node_kind
     //=== expressions ===//
     nullptr_constant_expr,
     integer_constant_expr,
+    builtin_expr,
     identifier_expr,
     function_call_expr,
     cast_expr,
@@ -183,7 +184,6 @@ enum class node_kind
     //=== statements ===//
     decl_stmt,
     expr_stmt,
-    builtin_stmt,
     return_stmt,
     break_stmt,
     continue_stmt,
@@ -291,6 +291,35 @@ public:
 
 private:
     std::uint64_t _value;
+};
+
+/// An expression that does a builtin action.
+class builtin_expr : public dryad::basic_node<node_kind::builtin_expr, expr>
+{
+public:
+    enum builtin_t : std::uint16_t
+    {
+        print,
+        assert,
+    };
+
+    explicit builtin_expr(dryad::node_ctor ctor, const clauf::type* ty, builtin_t builtin,
+                          clauf::expr* expr)
+    : node_base(ctor, ty)
+    {
+        set_builtin_impl(builtin);
+        insert_child_after(nullptr, expr);
+    }
+
+    builtin_t builtin() const
+    {
+        return builtin_impl();
+    }
+
+    DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(builtin_t, builtin_impl);
 };
 
 /// A name, which refers to a declaration, e.g. `int i`
@@ -512,34 +541,6 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
-};
-
-/// A statement that does a builtin action.
-class builtin_stmt : public dryad::basic_node<node_kind::builtin_stmt, stmt>
-{
-public:
-    enum builtin_t : std::uint16_t
-    {
-        print,
-        assert,
-    };
-
-    explicit builtin_stmt(dryad::node_ctor ctor, builtin_t builtin, clauf::expr* expr)
-    : node_base(ctor)
-    {
-        set_builtin_impl(builtin);
-        insert_child_after(nullptr, expr);
-    }
-
-    builtin_t builtin() const
-    {
-        return builtin_impl();
-    }
-
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
-
-private:
-    DRYAD_ATTRIBUTE_USER_DATA16(builtin_t, builtin_impl);
 };
 
 /// A return statement, e.g. `return 0;`

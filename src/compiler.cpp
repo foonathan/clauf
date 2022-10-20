@@ -253,9 +253,9 @@ constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
                                         .map(LEXY_LIT("unsigned"), clauf::type_specifier::unsigned_)
                                         .map(LEXY_LIT("short"), clauf::type_specifier::short_);
 
-constexpr auto kw_builtin_stmts = lexy::symbol_table<clauf::builtin_stmt::builtin_t> //
-                                      .map(LEXY_LIT("__clauf_print"), clauf::builtin_stmt::print)
-                                      .map(LEXY_LIT("__clauf_assert"), clauf::builtin_stmt::assert);
+constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
+                                      .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
+                                      .map(LEXY_LIT("__clauf_assert"), clauf::builtin_expr::assert);
 
 template <bool AllowReserved>
 struct identifier
@@ -264,7 +264,7 @@ struct identifier
 
     static constexpr auto rule
         = id.reserve(kw_nullptr, kw_return, kw_break, kw_continue, kw_if, kw_else, kw_while, kw_do,
-                     dsl::literal_set(kw_type_specifiers), dsl::literal_set(kw_builtin_stmts));
+                     dsl::literal_set(kw_type_specifiers), dsl::literal_set(kw_builtin_exprs));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
 
@@ -428,6 +428,20 @@ struct type_name_in_cast
         });
 };
 
+struct expr;
+
+struct builtin_expr
+{
+    static constexpr auto rule
+        = dsl::position(dsl::symbol<kw_builtin_exprs>) >> dsl::parenthesized(dsl::recurse<expr>);
+    static constexpr auto value = callback<clauf::builtin_expr*>(
+        [](compiler_state& state, const char* pos, clauf::builtin_expr::builtin_t builtin,
+           clauf::expr* child) {
+            auto type = state.ast.create(clauf::builtin_type::void_);
+            return state.ast.create<clauf::builtin_expr>(pos, type, builtin, child);
+        });
+};
+
 struct expr : lexy::expression_production
 {
     // primary-expression
@@ -446,7 +460,7 @@ struct expr : lexy::expression_production
         auto parens     = dsl::recurse<expr> + dsl::parenthesized.close();
         auto paren_expr = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
 
-        return paren_expr | id | dsl::else_ >> constant;
+        return paren_expr | id | dsl::p<builtin_expr> | dsl::else_ >> constant;
     }();
 
     struct postfix : dsl::postfix_op
@@ -854,13 +868,6 @@ struct expr_stmt
     static constexpr auto value = construct<clauf::expr_stmt>;
 };
 
-struct builtin_stmt
-{
-    static constexpr auto rule
-        = dsl::position(dsl::symbol<kw_builtin_stmts>) >> dsl::p<expr> + dsl::semicolon;
-    static constexpr auto value = construct<clauf::builtin_stmt>;
-};
-
 struct return_stmt
 {
     static constexpr auto rule = dsl::position(kw_return)
@@ -990,7 +997,7 @@ struct block_stmt : lexy::scan_production<clauf::block_stmt*>
 struct stmt
 {
     static constexpr auto rule
-        = dsl::p<block_stmt> | dsl::p<builtin_stmt>                          //
+        = dsl::p<block_stmt>                                                 //
           | dsl::p<return_stmt> | dsl::p<break_stmt> | dsl::p<continue_stmt> //
           | dsl::p<if_stmt>                                                  //
           | dsl::p<while_stmt> | dsl::p<do_while_stmt>                       //

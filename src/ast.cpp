@@ -263,6 +263,8 @@ const char* to_string(clauf::node_kind kind)
         return "nullptr constant expr";
     case clauf::node_kind::integer_constant_expr:
         return "integer constant expr";
+    case clauf::node_kind::builtin_expr:
+        return "builtin expr";
     case clauf::node_kind::identifier_expr:
         return "identifier expr";
     case clauf::node_kind::function_call_expr:
@@ -285,8 +287,6 @@ const char* to_string(clauf::node_kind kind)
         return "decl stmt";
     case clauf::node_kind::expr_stmt:
         return "expr stmt";
-    case clauf::node_kind::builtin_stmt:
-        return "builtin stmt";
     case clauf::node_kind::return_stmt:
         return "return stmt";
     case clauf::node_kind::break_stmt:
@@ -379,6 +379,17 @@ void clauf::dump_ast(const ast& ast)
             [&](const integer_constant_expr* expr) {
                 std::printf("%ld : ", expr->value());
                 dump_type(expr->type());
+            },
+            [&](const builtin_expr* expr) {
+                switch (expr->builtin())
+                {
+                case builtin_expr::print:
+                    std::printf("__clauf_print");
+                    break;
+                case builtin_expr::assert:
+                    std::printf("__clauf_assert");
+                    break;
+                }
             },
             [&](const identifier_expr* expr) {
                 std::printf("'%s' : ", expr->declaration()->name().c_str(ast.symbols));
@@ -542,17 +553,6 @@ void clauf::dump_ast(const ast& ast)
                 dump_type(expr->type());
             },
             //=== stmt ===//
-            [&](const builtin_stmt* stmt) {
-                switch (stmt->builtin())
-                {
-                case builtin_stmt::print:
-                    std::printf("__clauf_print");
-                    break;
-                case builtin_stmt::assert:
-                    std::printf("__clauf_assert");
-                    break;
-                }
-            },
             [&](const while_stmt* stmt) {
                 switch (stmt->loop_kind())
                 {

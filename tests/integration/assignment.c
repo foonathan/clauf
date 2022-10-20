@@ -10,6 +10,6 @@ int main()
 
     int j;
     __clauf_assert((i = j = 1) == 1);
-    __clauf_assert i == 1;
-    __clauf_assert j == 1;
+    __clauf_assert(i == 1);
+    __clauf_assert(j == 1);
 }

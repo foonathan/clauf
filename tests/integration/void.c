@@ -14,12 +14,12 @@ void g()
 
 int main()
 {
-    __clauf_assert global == 0;
+    __clauf_assert(global == 0);
 
     f();
-    __clauf_assert global == 42;
+    __clauf_assert(global == 42);
 
     g();
-    __clauf_assert global == 11;
+    __clauf_assert(global == 11);
 }
 

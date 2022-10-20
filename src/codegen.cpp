@@ -220,6 +220,22 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
         },
+        [&](dryad::traverse_event_exit, const clauf::builtin_expr* expr) {
+            // The underlying expression has been visited, and pushed its value onto the stack.
+            switch (expr->builtin())
+            {
+            case clauf::builtin_expr::print:
+                // Print the value on top of the stack.
+                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
+                // Remove the value after we have printed it.
+                lauf_asm_inst_pop(b, 0);
+                break;
+            case clauf::builtin_expr::assert:
+                // Assert that the value is non-zero.
+                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
+                break;
+            }
+        },
         [&](const clauf::identifier_expr* expr) {
             if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
             {
@@ -686,22 +702,6 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
             // the stack -- if the expression did not do that for us already.
             if (lauf_asm_build_get_vstack_size(b) == 1)
                 lauf_asm_inst_pop(b, 0);
-        },
-        [&](dryad::traverse_event_exit, const clauf::builtin_stmt* stmt) {
-            // The underlying expression has been visited, and pushed its value onto the stack.
-            switch (stmt->builtin())
-            {
-            case clauf::builtin_stmt::print:
-                // Print the value on top of the stack.
-                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
-                // Remove the value after we have printed it.
-                lauf_asm_inst_pop(b, 0);
-                break;
-            case clauf::builtin_stmt::assert:
-                // Assert that the value is non-zero.
-                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
-                break;
-            }
         },
         [&](dryad::traverse_event_exit, const clauf::return_stmt*) {
             // The underlying expression has been visited, and we return.

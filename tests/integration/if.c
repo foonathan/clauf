@@ -26,14 +26,14 @@ int if_with_else_if(int condition)
 
 int main()
 {
-    __clauf_assert if_with_else(0) == 2;
-    __clauf_assert if_with_else(1) == 1;
+    __clauf_assert(if_with_else(0) == 2);
+    __clauf_assert(if_with_else(1) == 1);
 
-    __clauf_assert if_without_else(0) == 2;
-    __clauf_assert if_without_else(1) == 1;
+    __clauf_assert(if_without_else(0) == 2);
+    __clauf_assert(if_without_else(1) == 1);
 
-    __clauf_assert if_with_else_if(0) == 0;
-    __clauf_assert if_with_else_if(1) == 1;
-    __clauf_assert if_with_else_if(2) == 2;
-    __clauf_assert if_with_else_if(3) == 2;
+    __clauf_assert(if_with_else_if(0) == 0);
+    __clauf_assert(if_with_else_if(1) == 1);
+    __clauf_assert(if_with_else_if(2) == 2);
+    __clauf_assert(if_with_else_if(3) == 2);
 }
