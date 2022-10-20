@@ -301,6 +301,8 @@ public:
     {
         print,
         assert,
+        malloc,
+        free,
     };
 
     explicit builtin_expr(dryad::node_ctor ctor, const clauf::type* ty, builtin_t builtin,

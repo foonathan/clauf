@@ -255,7 +255,9 @@ constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
 
 constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
-                                      .map(LEXY_LIT("__clauf_assert"), clauf::builtin_expr::assert);
+                                      .map(LEXY_LIT("__clauf_assert"), clauf::builtin_expr::assert)
+                                      .map(LEXY_LIT("__clauf_malloc"), clauf::builtin_expr::malloc)
+                                      .map(LEXY_LIT("__clauf_free"), clauf::builtin_expr::free);
 
 template <bool AllowReserved>
 struct identifier
@@ -437,7 +439,18 @@ struct builtin_expr
     static constexpr auto value = callback<clauf::builtin_expr*>(
         [](compiler_state& state, const char* pos, clauf::builtin_expr::builtin_t builtin,
            clauf::expr* child) {
-            auto type = state.ast.create(clauf::builtin_type::void_);
+            auto type = [&]() -> const clauf::type* {
+                if (builtin == clauf::builtin_expr::malloc)
+                    return state.ast.types.build([&](clauf::type_forest::node_creator creator) {
+                        auto void_
+                            = creator.create<clauf::builtin_type>(clauf::builtin_type::void_);
+                        return creator.create<clauf::pointer_type>(void_);
+                    });
+                else
+                {
+                    return state.ast.create(clauf::builtin_type::void_);
+                }
+            }();
             return state.ast.create<clauf::builtin_expr>(pos, type, builtin, child);
         });
 };

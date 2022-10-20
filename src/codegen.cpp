@@ -9,6 +9,7 @@
 #include <lauf/asm/type.h>
 #include <lauf/lib/bits.h>
 #include <lauf/lib/debug.h>
+#include <lauf/lib/heap.h>
 #include <lauf/lib/int.h>
 #include <lauf/lib/memory.h>
 #include <lauf/lib/test.h>
@@ -233,6 +234,19 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             case clauf::builtin_expr::assert:
                 // Assert that the value is non-zero.
                 lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
+                break;
+
+            case clauf::builtin_expr::malloc:
+                // Add the alignment parameter.
+                lauf_asm_inst_uint(b, 8);
+                // Move size argument which is below alignment to the top.
+                lauf_asm_inst_roll(b, 1);
+                // Allocate memory.
+                lauf_asm_inst_call_builtin(b, lauf_lib_heap_alloc);
+                break;
+            case clauf::builtin_expr::free:
+                // Call free with the address on top of the stack.
+                lauf_asm_inst_call_builtin(b, lauf_lib_heap_free);
                 break;
             }
         },

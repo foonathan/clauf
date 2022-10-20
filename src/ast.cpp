@@ -389,6 +389,12 @@ void clauf::dump_ast(const ast& ast)
                 case builtin_expr::assert:
                     std::printf("__clauf_assert");
                     break;
+                case builtin_expr::malloc:
+                    std::printf("__clauf_malloc");
+                    break;
+                case builtin_expr::free:
+                    std::printf("__clauf_free");
+                    break;
                 }
             },
             [&](const identifier_expr* expr) {
