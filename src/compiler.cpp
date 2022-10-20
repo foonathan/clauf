@@ -741,15 +741,21 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
-            if (!clauf::is_arithmetic(left->type()))
+            if (clauf::is_arithmetic(left->type()) && clauf::is_arithmetic(right->type()))
+            {
+                do_usual_arithmetic_conversions(state, op.loc, left, right);
+            }
+            else if (clauf::is_pointer(left->type()) || clauf::is_pointer(right->type())
+                     || clauf::is_nullptr_constant(left) || clauf::is_nullptr_constant(right))
+            {
+                // TODO: check for compatible pointer types
+                // TODO: prevent nullptr comparison for relational
+            }
+            else
             {
                 state.logger.log(clauf::diagnostic_kind::error, "invalid type for comparison")
                     .annotation(clauf::annotation_kind::primary, op.loc, "here")
                     .finish();
-            }
-            else
-            {
-                do_usual_arithmetic_conversions(state, op.loc, left, right);
             }
 
             auto type = state.ast.types.create<clauf::builtin_type>(clauf::builtin_type::sint64);

@@ -10,6 +10,7 @@
 #include <lauf/lib/bits.h>
 #include <lauf/lib/debug.h>
 #include <lauf/lib/int.h>
+#include <lauf/lib/memory.h>
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/value.h>
@@ -437,11 +438,44 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             // At this point, two values have been pushed onto the stack.
             // Compare them.
             if (clauf::is_signed_int(expr->left()->type()))
+            {
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+            }
             else if (clauf::is_unsigned_int(expr->left()->type()))
-                lauf_asm_inst_call_builtin(b, lauf_lib_int_ucmp);
+            {
+                lauf_asm_inst_call_builtin(b, lauf_lib_int_ucmp); // NOLINT
+            }
+            else if (clauf::is_pointer(expr->left()->type())
+                     || clauf::is_pointer(expr->right()->type())
+                     || clauf::is_nullptr_constant(expr->left())
+                     || clauf::is_nullptr_constant(expr->right()))
+            {
+                if (expr->op() == clauf::comparison_op::eq
+                    || expr->op() == clauf::comparison_op::ne)
+                {
+                    // We're comparing pointers like integers for equality.
+                    // This does a bitwise comparison of the address.
+                    // Since two addresses are bitwise equal iff both point to the same object,
+                    // this works.
+                    lauf_asm_inst_call_builtin(b, lauf_lib_int_ucmp);
+                }
+                else
+                {
+                    // We need to check that they belong to the same allocation before allowing a
+                    // comparison.
+                    // This is done by getting the distance between the pointers, which panics if
+                    // they're not part of the same allocation.
+                    lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_distance);
+                    // And now we're comparing the distance with 0.
+                    lauf_asm_inst_uint(b, 0);
+                    lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
+                    CLAUF_TODO("the sign here is probably wrong");
+                }
+            }
             else
+            {
                 CLAUF_UNREACHABLE("invalid type");
+            }
 
             // And convert the three-way result into 0/1.
             switch (expr->op())
