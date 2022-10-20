@@ -405,10 +405,27 @@ struct argument_list
     static constexpr auto value = lexy::as_list<clauf::expr_list>;
 };
 
-struct type_name
+template <bool Abstract = false>
+struct declarator;
+struct type_specifier_list;
+
+struct type_name_in_cast
 {
-    static constexpr auto rule  = dsl::recurse_branch<struct type_specifier_list>;
-    static constexpr auto value = lexy::forward<clauf::type*>;
+    static constexpr auto rule = [] {
+        auto type_specifiers = dsl::recurse_branch<type_specifier_list>;
+        auto opt_declarator
+            = dsl::parenthesized.close()
+              | dsl::else_ >> dsl::recurse<declarator<true>> + dsl::parenthesized.close();
+
+        return type_specifiers >> opt_declarator;
+    }();
+    static constexpr auto value = callback<const clauf::type*>(
+        [](compiler_state& state, const clauf::type* base_type, clauf::declarator* decl = nullptr) {
+            if (decl != nullptr)
+                return clauf::get_type(state.ast.types, decl, base_type);
+            else
+                return base_type;
+        });
 };
 
 struct expr : lexy::expression_production
@@ -425,8 +442,8 @@ struct expr : lexy::expression_production
         // We thus do it here as part of the primary-expression, even though it is not a
         // primary-expression, but has lower precedence. However, no other operator matches before
         // that, so it works out.
-        auto cast   = dsl::p<type_name> >> dsl::parenthesized.close() + dsl::recurse<unary_expr>;
-        auto parens = dsl::recurse<expr> + dsl::parenthesized.close();
+        auto cast       = dsl::p<type_name_in_cast> >> dsl::recurse<unary_expr>;
+        auto parens     = dsl::recurse<expr> + dsl::parenthesized.close();
         auto paren_expr = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
 
         return paren_expr | id | dsl::else_ >> constant;
@@ -1082,7 +1099,7 @@ struct type_specifier_list
               });
 };
 
-template <bool Abstract = false>
+template <bool Abstract>
 struct declarator : lexy::expression_production
 {
     static constexpr auto name = Abstract ? "abstract_declarator" : "declarator";
