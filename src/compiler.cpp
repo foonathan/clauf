@@ -1177,8 +1177,9 @@ struct parameter_decl
 {
     static constexpr auto rule  = dsl::p<type_specifier_list> + dsl::p<declarator<true>>;
     static constexpr auto value = callback<clauf::parameter_decl*>(
-        [](compiler_state& state, clauf::type* type, clauf::declarator* decl) {
+        [](compiler_state& state, clauf::type* base_type, clauf::declarator* decl) {
             auto name = get_name(decl);
+            auto type = get_type(state.ast.types, decl, base_type);
             if (!clauf::is_complete_object_type(type))
             {
                 state.logger
