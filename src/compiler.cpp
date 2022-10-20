@@ -111,8 +111,11 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
     if (clauf::is_same(target_type, value->type()))
         return value;
 
-    if (clauf::is_arithmetic(target_type) && clauf::is_arithmetic(value->type()))
+    if ((clauf::is_arithmetic(target_type) && clauf::is_arithmetic(value->type()))
+        || (clauf::is_pointer(target_type) && clauf::is_nullptr_constant(value)))
+    {
         return state.ast.create<clauf::cast_expr>(loc, target_type, value);
+    }
     else if (clauf::is_pointer(target_type) && clauf::is_pointer(value->type()))
     {
         auto target_pointee_type
@@ -140,6 +143,7 @@ clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, cl
         switch (kind)
         {
         case clauf::builtin_type::void_:
+        case clauf::builtin_type::nullptr_t:
             CLAUF_UNREACHABLE("not an integer");
             return nullptr;
 
@@ -232,6 +236,7 @@ namespace dsl = lexy::dsl;
 
 constexpr auto id = dsl::identifier(dsl::unicode::xid_start_underscore, dsl::unicode::xid_continue);
 
+constexpr auto kw_nullptr  = LEXY_KEYWORD("nullptr", id);
 constexpr auto kw_return   = LEXY_KEYWORD("return", id);
 constexpr auto kw_break    = LEXY_KEYWORD("break", id);
 constexpr auto kw_continue = LEXY_KEYWORD("continue", id);
@@ -258,7 +263,7 @@ struct identifier
     static constexpr auto name = "identifier";
 
     static constexpr auto rule
-        = id.reserve(kw_return, kw_break, kw_continue, kw_if, kw_else, kw_while, kw_do,
+        = id.reserve(kw_nullptr, kw_return, kw_break, kw_continue, kw_if, kw_else, kw_while, kw_do,
                      dsl::literal_set(kw_type_specifiers), dsl::literal_set(kw_builtin_stmts));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
@@ -318,6 +323,16 @@ namespace clauf::grammar
 {
 struct unary_expr;
 struct assignment_expr;
+
+struct nullptr_constant_expr
+{
+    static constexpr auto rule = dsl::position(kw_nullptr);
+    static constexpr auto value
+        = callback<clauf::nullptr_constant_expr*>([](compiler_state& state, const char* pos) {
+              auto type = state.ast.create(clauf::builtin_type::nullptr_t);
+              return state.ast.create<clauf::nullptr_constant_expr>(pos, type);
+          });
+};
 
 struct integer_constant_expr
 {
@@ -401,7 +416,7 @@ struct expr : lexy::expression_production
     // primary-expression
     static constexpr auto atom = [] {
         auto id       = dsl::p<identifier_expr>;
-        auto constant = dsl::p<integer_constant_expr>;
+        auto constant = dsl::p<nullptr_constant_expr> | dsl::else_ >> dsl::p<integer_constant_expr>;
 
         // When we have a '(' in the beginning of an expression, it can be either (expr) or
         // (type)expr. This can be distinguished by checking for a type name after the '(', which is

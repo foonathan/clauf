@@ -56,6 +56,8 @@ lauf_asm_type codegen_type(const clauf::type* ty)
             {
             case clauf::builtin_type::void_:
                 CLAUF_UNREACHABLE("not needed in lauf");
+            case clauf::builtin_type::nullptr_t:
+                return lauf_asm_type_value;
 
             case clauf::builtin_type::sint8:
                 return lauf_lib_int_s8;
@@ -209,6 +211,10 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
     auto b = ctx.builder;
     dryad::visit_tree(
         expr,
+        [&](const clauf::nullptr_constant_expr*) {
+            // Push null address onto the stack.
+            lauf_asm_inst_null(b);
+        },
         [&](const clauf::integer_constant_expr* expr) {
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
@@ -333,6 +339,15 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             else if (clauf::is_pointer(expr->type()) && clauf::is_pointer(expr->child()->type()))
             {
                 // We don't need to do anything, pointers in lauf aren't typed.
+            }
+            else if (clauf::is_pointer(expr->type()) && clauf::is_nullptr_constant(expr->child()))
+            {
+                // We don't want the value of the child expression.
+                // This is because the integer 0 does not have the same representation as the null
+                // address.
+                lauf_asm_inst_pop(b, 0);
+                // Push null instead.
+                lauf_asm_inst_null(b);
             }
             else
             {

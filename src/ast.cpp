@@ -48,6 +48,7 @@ clauf::type* clauf::make_unsigned(type_forest::node_creator creator, const type*
         return creator.create<clauf::builtin_type>(clauf::builtin_type::uint64);
 
     case clauf::builtin_type::void_:
+    case clauf::builtin_type::nullptr_t:
         return nullptr;
     }
 }
@@ -83,6 +84,7 @@ bool clauf::is_signed_int(const type* ty)
         return true;
 
     case builtin_type::void_:
+    case builtin_type::nullptr_t:
     case builtin_type::uint8:
     case builtin_type::uint16:
     case builtin_type::uint32:
@@ -105,6 +107,7 @@ bool clauf::is_unsigned_int(const type* ty)
         return true;
 
     case builtin_type::void_:
+    case builtin_type::nullptr_t:
     case builtin_type::sint8:
     case builtin_type::sint16:
     case builtin_type::sint32:
@@ -165,6 +168,7 @@ unsigned clauf::integer_rank_of(const type* ty)
         return 64;
 
     case clauf::builtin_type::void_:
+    case clauf::builtin_type::nullptr_t:
         return unsigned(-1);
     }
 }
@@ -182,6 +186,25 @@ bool clauf::is_lvalue(const expr* e)
 bool clauf::is_modifiable_lvalue(const expr* e)
 {
     return is_lvalue(e) && is_complete_object_type(e->type());
+}
+
+bool clauf::is_nullptr_constant(const expr* e)
+{
+    if (auto integer_constant = dryad::node_try_cast<integer_constant_expr>(e))
+    {
+        return integer_constant->value() == 0;
+    }
+    else if (auto cast = dryad::node_try_cast<cast_expr>(e))
+    {
+        if (!clauf::is_void(cast->type()))
+            return false;
+
+        return is_nullptr_constant(cast->child());
+    }
+    else
+    {
+        return dryad::node_has_kind<nullptr_constant_expr>(e);
+    }
 }
 
 clauf::name clauf::get_name(const declarator* decl)
@@ -236,6 +259,8 @@ const char* to_string(clauf::node_kind kind)
     {
     case clauf::node_kind::translation_unit:
         return "translation unit";
+    case clauf::node_kind::nullptr_constant_expr:
+        return "nullptr constant expr";
     case clauf::node_kind::integer_constant_expr:
         return "integer constant expr";
     case clauf::node_kind::identifier_expr:
@@ -292,6 +317,9 @@ void dump_type(const clauf::type* ty)
             {
             case clauf::builtin_type::void_:
                 std::printf("void");
+                break;
+            case clauf::builtin_type::nullptr_t:
+                std::printf("nullptr_t");
                 break;
             case clauf::builtin_type::sint8:
                 std::printf("sint8");

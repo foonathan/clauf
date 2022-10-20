@@ -46,6 +46,7 @@ public:
     enum type_kind_t : std::uint16_t
     {
         void_,
+        nullptr_t,
 
         sint8,
         uint8,
@@ -164,6 +165,7 @@ enum class node_kind
     translation_unit,
 
     //=== expressions ===//
+    nullptr_constant_expr,
     integer_constant_expr,
     identifier_expr,
     function_call_expr,
@@ -175,7 +177,7 @@ enum class node_kind
     assignment_expr,
     conditional_expr,
 
-    first_expr = integer_constant_expr,
+    first_expr = nullptr_constant_expr,
     last_expr  = conditional_expr,
 
     //=== statements ===//
@@ -259,8 +261,20 @@ private:
 
 bool is_lvalue(const expr* e);
 bool is_modifiable_lvalue(const expr* e);
+bool is_nullptr_constant(const expr* e);
 
 using expr_list = dryad::unlinked_node_list<expr>;
+
+class nullptr_constant_expr : public dryad::basic_node<node_kind::nullptr_constant_expr, expr>
+{
+public:
+    explicit nullptr_constant_expr(dryad::node_ctor ctor, const clauf::type* ty)
+    : node_base(ctor, ty)
+    {
+        CLAUF_PRECONDITION(dryad::node_cast<builtin_type>(ty)->type_kind()
+                           == builtin_type::nullptr_t);
+    }
+};
 
 class integer_constant_expr : public dryad::basic_node<node_kind::integer_constant_expr, expr>
 {
