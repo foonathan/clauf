@@ -507,6 +507,7 @@ struct expr : lexy::expression_production
     struct postfix : dsl::postfix_op
     {
         static constexpr auto op = op_(LEXY_LIT("(") >> dsl::p<argument_list>)
+                                   / op_(dsl::square_bracketed(dsl::recurse<expr>))
                                    / op_<clauf::unary_op::post_inc>(LEXY_LIT("++"))
                                    / op_<clauf::unary_op::post_dec>(LEXY_LIT("--"));
         using operand = dsl::atom;
@@ -775,6 +776,25 @@ struct expr : lexy::expression_production
 
             return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
                                                                converted_arguments);
+        },
+        // This is called for ptr[index]
+        [](compiler_state& state, clauf::expr* ptr, op_tag<> op, clauf::expr* index) {
+            // Normalize, so pointer is always the left argument.
+            if (!clauf::is_pointer(ptr->type()))
+                std::swap(ptr, index);
+
+            if (!clauf::is_pointer(ptr->type()) || !clauf::is_integer(index->type()))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "invalid type for subscript operator")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "here")
+                    .finish();
+            }
+
+            auto offset
+                = state.ast.create<clauf::arithmetic_expr>(op.loc, ptr->type(),
+                                                           clauf::arithmetic_op::add, ptr, index);
+            return create_unary(state, {op.loc, clauf::unary_op::deref}, offset);
         },
         [](compiler_state& state, clauf::expr* child, op_tag<clauf::unary_op> op) {
             return create_unary(state, op, child);
