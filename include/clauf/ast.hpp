@@ -472,6 +472,7 @@ enum class arithmetic_op : std::uint16_t
 {
     add,
     sub,
+    ptrdiff, // subtraction ptr - ptr
     mul,
     div,
     rem,

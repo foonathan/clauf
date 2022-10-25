@@ -462,6 +462,9 @@ void clauf::dump_ast(const ast& ast)
                 case arithmetic_op::sub:
                     std::printf("-");
                     break;
+                case arithmetic_op::ptrdiff:
+                    std::printf("- (ptr)");
+                    break;
                 case arithmetic_op::mul:
                     std::printf("*");
                     break;

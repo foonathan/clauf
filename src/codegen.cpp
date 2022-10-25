@@ -86,9 +86,27 @@ lauf_asm_type codegen_type(const clauf::type* ty)
         });
 }
 
-template <typename Op>
-void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const clauf::type* ty)
+template <typename Op, typename Expr>
+void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
 {
+    if constexpr (std::is_same_v<Expr, clauf::arithmetic_expr>)
+    {
+        if (op == Op::ptrdiff)
+        {
+            // Get the difference in bytes.
+            lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_distance);
+
+            // Convert that to the type of the pointee.
+            auto pointee_type = codegen_type(
+                dryad::node_cast<clauf::pointer_type>(expr->left()->type())->pointee_type());
+            lauf_asm_inst_uint(b, pointee_type.layout.size);
+            lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
+
+            return;
+        }
+    }
+
+    auto ty = expr->type();
     switch (op)
     {
     case Op::add:
@@ -452,7 +470,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                                         expr->op() == clauf::unary_op::pre_inc
                                             ? clauf::arithmetic_op::add
                                             : clauf::arithmetic_op::sub,
-                                        expr->type());
+                                        expr);
 
                 // Save a copy into the lvalue.
                 lauf_asm_inst_pick(b, 0);
@@ -468,13 +486,13 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                 // We duplicate the old value as we want to evaluate that.
                 lauf_asm_inst_pick(b, 0);
 
-                // Add/subtract one to the current value.
+                // Add/subtract one to the ccrrent value.
                 lauf_asm_inst_uint(b, 1);
                 call_arithmetic_builtin(b,
                                         expr->op() == clauf::unary_op::post_inc
                                             ? clauf::arithmetic_op::add
                                             : clauf::arithmetic_op::sub,
-                                        expr->type());
+                                        expr);
 
                 // Store the new value in the lvalue, this removes it from the stack.
                 auto type = codegen_lvalue(ctx, expr->child());
@@ -498,7 +516,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
         },
         [&](dryad::traverse_event_exit, const clauf::arithmetic_expr* expr) {
             // At this point, two values have been pushed onto the stack.
-            call_arithmetic_builtin(b, expr->op(), expr->type());
+            call_arithmetic_builtin(b, expr->op(), expr);
         },
         [&](dryad::traverse_event_exit, const clauf::comparison_expr* expr) {
             // At this point, two values have been pushed onto the stack.
@@ -643,7 +661,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             {
                 visitor(expr->left());
                 visitor(expr->right());
-                call_arithmetic_builtin(b, expr->op(), expr->type());
+                call_arithmetic_builtin(b, expr->op(), expr);
             }
             else
             {

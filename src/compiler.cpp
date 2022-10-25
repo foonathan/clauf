@@ -784,8 +784,15 @@ struct expr : lexy::expression_production
             auto               is_valid_type = [&] {
                 switch (op)
                 {
-                case clauf::arithmetic_op::add:
                 case clauf::arithmetic_op::sub:
+                    if (clauf::is_pointer(left->type()) && clauf::is_pointer(right->type()))
+                    {
+                        type  = state.ast.create(clauf::builtin_type::sint64);
+                        op.op = clauf::arithmetic_op::ptrdiff;
+                        return true;
+                    }
+                    // fallthrough
+                case clauf::arithmetic_op::add:
                     if (clauf::is_pointer(left->type()))
                     {
                         type = left->type();
@@ -813,6 +820,10 @@ struct expr : lexy::expression_production
                 case clauf::arithmetic_op::shl:
                 case clauf::arithmetic_op::shr:
                     return clauf::is_integer(left->type()) && clauf::is_integer(right->type());
+
+                case clauf::arithmetic_op::ptrdiff:
+                    CLAUF_UNREACHABLE("not an operator that is parsed");
+                    break;
                 }
             }();
             if (!is_valid_type)
