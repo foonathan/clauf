@@ -106,7 +106,8 @@ void check_inside_loop(compiler_state& state, clauf::location loc)
 // Attempts to convert the value expression to target_type by creating a cast_expr or raising an
 // error.
 clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc,
-                                      const clauf::type* target_type, clauf::expr* value)
+                                      clauf::assignment_op op, const clauf::type* target_type,
+                                      clauf::expr* value)
 {
     if (clauf::is_same(target_type, value->type()))
         return value;
@@ -125,6 +126,9 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
         if (clauf::is_void(target_pointee_type) || clauf::is_void(value_pointee_type))
             return state.ast.create<clauf::cast_expr>(loc, target_type, value);
     }
+    else if (clauf::is_pointer(target_type) && clauf::is_integer(value->type())
+             && (op == clauf::assignment_op::add || op == clauf::assignment_op::sub))
+        return value;
 
     state.logger.log(clauf::diagnostic_kind::error, "cannot do implicit conversion in assignment")
         .annotation(clauf::annotation_kind::primary, loc, "here")
@@ -754,7 +758,7 @@ struct expr : lexy::expression_production
             {
                 auto argument = arguments.pop_front();
                 argument      = do_assignment_conversion(state, state.ast.location_of(argument),
-                                                         *cur_param, argument);
+                                                         assignment_op::none, *cur_param, argument);
                 converted_arguments.push_back(argument);
 
                 ++cur_param;
@@ -899,7 +903,7 @@ struct expr : lexy::expression_production
                     .annotation(clauf::annotation_kind::primary, op.loc, "here")
                     .finish();
             }
-            right = do_assignment_conversion(state, op.loc, left->type(), right);
+            right = do_assignment_conversion(state, op.loc, op, left->type(), right);
             return state.ast.create<clauf::assignment_expr>(op.loc, left->type(), op, left, right);
         },
         [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
@@ -980,7 +984,7 @@ struct return_stmt
             return state.ast.create<clauf::return_stmt>(pos);
         },
         [](compiler_state& state, const char* pos, clauf::expr* expr) {
-            expr = do_assignment_conversion(state, pos,
+            expr = do_assignment_conversion(state, pos, assignment_op::none,
                                             state.current_function->type()->return_type(), expr);
             return state.ast.create<clauf::return_stmt>(pos, expr);
         });
@@ -1338,7 +1342,8 @@ struct declaration
                       auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
                       auto converted_init
                           = do_assignment_conversion(state, state.ast.location_of(decl),
-                                                     decl->type(), init->initializer());
+                                                     assignment_op::none, decl->type(),
+                                                     init->initializer());
                       var_decl->set_initializer(converted_init);
                       result.push_back(decl);
                   }
