@@ -153,6 +153,7 @@ bool is_pointer(const type* ty);
 bool is_scalar(const type* ty);
 
 bool is_complete_object_type(const type* ty);
+bool is_pointer_to_complete_object_type(const type* ty);
 
 /// Returns -1 for non-integers.
 unsigned integer_rank_of(const type* ty);

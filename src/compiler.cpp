@@ -636,7 +636,8 @@ struct expr : lexy::expression_production
             case clauf::unary_op::pre_dec:
             case clauf::unary_op::post_inc:
             case clauf::unary_op::post_dec:
-                return (clauf::is_arithmetic(child->type()) || clauf::is_pointer(child->type()))
+                return (clauf::is_arithmetic(child->type())
+                        || clauf::is_pointer_to_complete_object_type(child->type()))
                        && clauf::is_modifiable_lvalue(child);
             case clauf::unary_op::address:
                 return clauf::is_lvalue(child);
@@ -783,7 +784,8 @@ struct expr : lexy::expression_production
             if (!clauf::is_pointer(ptr->type()))
                 std::swap(ptr, index);
 
-            if (!clauf::is_pointer(ptr->type()) || !clauf::is_integer(index->type()))
+            if (!clauf::is_pointer_to_complete_object_type(ptr->type())
+                || !clauf::is_integer(index->type()))
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error, "invalid type for subscript operator")
@@ -809,7 +811,8 @@ struct expr : lexy::expression_production
                 switch (op)
                 {
                 case clauf::arithmetic_op::sub:
-                    if (clauf::is_pointer(left->type()) && clauf::is_pointer(right->type()))
+                    if (clauf::is_pointer_to_complete_object_type(left->type())
+                        && clauf::is_pointer_to_complete_object_type(right->type()))
                     {
                         type  = state.ast.create(clauf::builtin_type::sint64);
                         op.op = clauf::arithmetic_op::ptrdiff;
@@ -817,12 +820,12 @@ struct expr : lexy::expression_production
                     }
                     // fallthrough
                 case clauf::arithmetic_op::add:
-                    if (clauf::is_pointer(left->type()))
+                    if (clauf::is_pointer_to_complete_object_type(left->type()))
                     {
                         type = left->type();
                         return clauf::is_integer(right->type());
                     }
-                    else if (clauf::is_pointer(right->type()))
+                    else if (clauf::is_pointer_to_complete_object_type(right->type()))
                     {
                         // We always want the pointer operand on the left.
                         std::swap(left, right);
@@ -855,6 +858,8 @@ struct expr : lexy::expression_production
                 state.logger.log(clauf::diagnostic_kind::error, "invalid type for binary operator")
                     .annotation(clauf::annotation_kind::primary, op.loc, "here")
                     .finish();
+
+                type = left->type();
             }
             else
             {

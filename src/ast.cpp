@@ -143,6 +143,15 @@ bool clauf::is_complete_object_type(const type* ty)
     return !clauf::is_void(ty);
 }
 
+bool clauf::is_pointer_to_complete_object_type(const type* ty)
+{
+    if (!clauf::is_pointer(ty))
+        return false;
+
+    return clauf::is_complete_object_type(
+        dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
+}
+
 unsigned clauf::integer_rank_of(const type* ty)
 {
     if (!dryad::node_has_kind<clauf::builtin_type>(ty))
