@@ -167,6 +167,7 @@ enum class node_kind
     //=== expressions ===//
     nullptr_constant_expr,
     integer_constant_expr,
+    type_constant_expr,
     builtin_expr,
     identifier_expr,
     function_call_expr,
@@ -291,6 +292,40 @@ public:
 
 private:
     std::uint64_t _value;
+};
+
+/// A sizeof or alignof expression.
+class type_constant_expr : public dryad::basic_node<node_kind::type_constant_expr, expr>
+{
+public:
+    enum op_t : std::uint16_t
+    {
+        sizeof_,
+        alignof_,
+    };
+
+    explicit type_constant_expr(dryad::node_ctor ctor, const clauf::type* ty, op_t op,
+                                const clauf::type* operand_ty)
+    : node_base(ctor, ty), _type(operand_ty)
+    {
+        DRYAD_PRECONDITION(dryad::node_cast<builtin_type>(ty)->type_kind() == builtin_type::uint64);
+        set_op_impl(op);
+    }
+
+    op_t op() const
+    {
+        return op_impl();
+    }
+
+    const clauf::type* operand_type() const
+    {
+        return _type;
+    }
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(op_t, op_impl);
+
+    const clauf::type* _type;
 };
 
 /// An expression that does a builtin action.

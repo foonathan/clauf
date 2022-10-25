@@ -263,6 +263,8 @@ const char* to_string(clauf::node_kind kind)
         return "nullptr constant expr";
     case clauf::node_kind::integer_constant_expr:
         return "integer constant expr";
+    case clauf::node_kind::type_constant_expr:
+        return "type constant expr";
     case clauf::node_kind::builtin_expr:
         return "builtin expr";
     case clauf::node_kind::identifier_expr:
@@ -379,6 +381,18 @@ void clauf::dump_ast(const ast& ast)
             [&](const integer_constant_expr* expr) {
                 std::printf("%ld : ", expr->value());
                 dump_type(expr->type());
+            },
+            [&](const type_constant_expr* expr) {
+                switch (expr->op())
+                {
+                case type_constant_expr::sizeof_:
+                    std::printf("sizeof ");
+                    break;
+                case type_constant_expr::alignof_:
+                    std::printf("alignof ");
+                    break;
+                }
+                dump_type(expr->operand_type());
             },
             [&](const builtin_expr* expr) {
                 switch (expr->builtin())

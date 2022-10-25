@@ -221,6 +221,18 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
         },
+        [&](const clauf::type_constant_expr* expr) {
+            auto lauf_type = codegen_type(expr->operand_type());
+            switch (expr->op())
+            {
+            case clauf::type_constant_expr::sizeof_:
+                lauf_asm_inst_uint(b, lauf_type.layout.size);
+                break;
+            case clauf::type_constant_expr::alignof_:
+                lauf_asm_inst_uint(b, lauf_type.layout.alignment);
+                break;
+            }
+        },
         [&](dryad::traverse_event_exit, const clauf::builtin_expr* expr) {
             // The underlying expression has been visited, and pushed its value onto the stack.
             switch (expr->builtin())

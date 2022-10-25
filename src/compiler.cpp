@@ -245,6 +245,10 @@ constexpr auto kw_else     = LEXY_KEYWORD("else", id);
 constexpr auto kw_while    = LEXY_KEYWORD("while", id);
 constexpr auto kw_do       = LEXY_KEYWORD("do", id);
 
+constexpr auto kw_type_ops = lexy::symbol_table<clauf::type_constant_expr::op_t> //
+                                 .map(LEXY_LIT("sizeof"), clauf::type_constant_expr::sizeof_)
+                                 .map(LEXY_LIT("alignof"), clauf::type_constant_expr::alignof_);
+
 constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
                                         .map(LEXY_LIT("void"), clauf::type_specifier::void_)
                                         .map(LEXY_LIT("int"), clauf::type_specifier::int_)
@@ -265,8 +269,9 @@ struct identifier
     static constexpr auto name = "identifier";
 
     static constexpr auto rule
-        = id.reserve(kw_nullptr, kw_return, kw_break, kw_continue, kw_if, kw_else, kw_while, kw_do,
-                     dsl::literal_set(kw_type_specifiers), dsl::literal_set(kw_builtin_exprs));
+        = id.reserve(kw_nullptr, dsl::literal_set(kw_type_ops), kw_return, kw_break, kw_continue,
+                     kw_if, kw_else, kw_while, kw_do, dsl::literal_set(kw_type_specifiers),
+                     dsl::literal_set(kw_builtin_exprs));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
 
@@ -411,7 +416,8 @@ template <bool Abstract = false>
 struct declarator;
 struct type_specifier_list;
 
-struct type_name_in_cast
+// Parses a type name followed by a closing paren.
+struct type_name_in_parens
 {
     static constexpr auto rule = [] {
         auto type_specifiers = dsl::recurse_branch<type_specifier_list>;
@@ -458,23 +464,38 @@ struct builtin_expr
 struct expr : lexy::expression_production
 {
     // primary-expression
-    static constexpr auto atom = [] {
-        auto id       = dsl::p<identifier_expr>;
-        auto constant = dsl::p<nullptr_constant_expr> | dsl::else_ >> dsl::p<integer_constant_expr>;
+    static constexpr auto atom
+        = [] {
+              auto id = dsl::p<identifier_expr>;
+              auto constant
+                  = dsl::p<nullptr_constant_expr> | dsl::else_ >> dsl::p<integer_constant_expr>;
 
-        // When we have a '(' in the beginning of an expression, it can be either (expr) or
-        // (type)expr. This can be distinguished by checking for a type name after the '(', which is
-        // not possible if cast were a regular prefix operator.
-        //
-        // We thus do it here as part of the primary-expression, even though it is not a
-        // primary-expression, but has lower precedence. However, no other operator matches before
-        // that, so it works out.
-        auto cast       = dsl::p<type_name_in_cast> >> dsl::recurse<unary_expr>;
-        auto parens     = dsl::recurse<expr> + dsl::parenthesized.close();
-        auto paren_expr = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
+              // When we have a '(' in the beginning of an expression, it can be either (expr) or
+              // (type)expr. This can be distinguished by checking for a type name after the '(',
+              // which is not possible if cast were a regular prefix operator.
+              //
+              // We thus do it here as part of the primary-expression, even though it is not a
+              // primary-expression, but has lower precedence. However, no other operator matches
+              // before that, so it works out.
+              auto cast   = dsl::p<type_name_in_parens> >> dsl::recurse<unary_expr>;
+              auto parens = dsl::recurse<expr> + dsl::parenthesized.close();
+              auto paren_expr
+                  = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
 
-        return paren_expr | id | dsl::p<builtin_expr> | dsl::else_ >> constant;
-    }();
+              // sizeof/alignof are technically unary operators, but we can't parse them here since
+              // their operand is a type and not an expression. It should make no difference,
+              // however.
+              //
+              // Parse (type-name) or (expr) as operand of sizeof.
+              auto type_constant_operand_parens = dsl::parenthesized.open() >>  //
+                  (dsl::p<type_name_in_parens> | dsl::else_ >> dsl::recurse<expr> + dsl::parenthesized.close());
+              auto type_constant_expr
+                  = dsl::position(dsl::symbol<kw_type_ops>)
+                    >> (type_constant_operand_parens | dsl::else_ >> dsl::recurse<unary_expr>);
+
+              return paren_expr | type_constant_expr | id
+                     | dsl::p<builtin_expr> | dsl::else_ >> constant;
+          }();
 
     struct postfix : dsl::postfix_op
     {
@@ -656,6 +677,26 @@ struct expr : lexy::expression_production
     static constexpr auto value = callback<clauf::expr*>( //
         [](const compiler_state&, clauf::expr* expr) { return expr; },
         [](const compiler_state&, const char*, clauf::expr* expr) { return expr; },
+        [](compiler_state& state, const char* pos, clauf::type_constant_expr::op_t op,
+           const clauf::type* operand_ty) {
+            auto type = state.ast.create(clauf::builtin_type::uint64);
+            return state.ast.create<clauf::type_constant_expr>(pos, type, op, operand_ty);
+        },
+        [](compiler_state& state, const char* pos, clauf::type_constant_expr::op_t op,
+           const clauf::expr* operand_expr) {
+            if (op != clauf::type_constant_expr::sizeof_)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "only sizeof can take an expression directly")
+                    .annotation(clauf::annotation_kind::primary,
+                                state.ast.location_of(operand_expr), "here")
+                    .finish();
+            }
+
+            auto type = state.ast.create(clauf::builtin_type::uint64);
+            return state.ast.create<clauf::type_constant_expr>(pos, type, op, operand_expr->type());
+        },
         [](compiler_state& state, const char* pos, const clauf::type* target_type,
            clauf::expr* child) -> clauf::expr* {
             // Check that the target type is valid.
