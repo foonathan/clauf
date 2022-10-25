@@ -167,15 +167,15 @@ clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, cl
 }
 
 // Performs the usual arithmetic conversions on both operands.
-void do_usual_arithmetic_conversions(compiler_state& state, clauf::location loc, clauf::expr*& lhs,
-                                     clauf::expr*& rhs)
+const clauf::type* do_usual_arithmetic_conversions(compiler_state& state, clauf::location loc,
+                                                   clauf::expr*& lhs, clauf::expr*& rhs)
 {
     CLAUF_PRECONDITION(clauf::is_integer(lhs->type()) && clauf::is_integer(rhs->type()));
 
     lhs = do_integer_promotion(state, loc, lhs);
     rhs = do_integer_promotion(state, loc, rhs);
     if (clauf::is_same(lhs->type(), rhs->type()))
-        return;
+        return lhs->type();
 
     if (clauf::is_signed_int(lhs->type()) == clauf::is_signed_int(rhs->type()))
     {
@@ -210,6 +210,9 @@ void do_usual_arithmetic_conversions(compiler_state& state, clauf::location loc,
             unsigned_op = state.ast.create<clauf::cast_expr>(loc, target_type, unsigned_op);
         }
     }
+
+    // We have adjusted both operands to return the same type at this point, so just return it.
+    return lhs->type();
 }
 
 template <typename ReturnType, typename... Callback>
@@ -776,21 +779,39 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
-            auto is_valid_type = [&] {
+            const clauf::type* type          = nullptr;
+            auto               is_valid_type = [&] {
                 switch (op)
                 {
                 case clauf::arithmetic_op::add:
                 case clauf::arithmetic_op::sub:
+                    if (clauf::is_pointer(left->type()))
+                    {
+                        type = left->type();
+                        return clauf::is_integer(right->type());
+                    }
+                    else if (clauf::is_pointer(right->type()))
+                    {
+                        // We always want the pointer operand on the left.
+                        std::swap(left, right);
+                        type = left->type();
+                        return clauf::is_integer(right->type());
+                    }
+                    else
+                        return clauf::is_arithmetic(left->type())
+                               && clauf::is_arithmetic(right->type());
+
                 case clauf::arithmetic_op::mul:
                 case clauf::arithmetic_op::div:
                 case clauf::arithmetic_op::rem:
-                    return clauf::is_arithmetic(left->type());
+                    return clauf::is_arithmetic(left->type())
+                           && clauf::is_arithmetic(right->type());
                 case clauf::arithmetic_op::band:
                 case clauf::arithmetic_op::bor:
                 case clauf::arithmetic_op::bxor:
                 case clauf::arithmetic_op::shl:
                 case clauf::arithmetic_op::shr:
-                    return clauf::is_integer(left->type());
+                    return clauf::is_integer(left->type()) && clauf::is_integer(right->type());
                 }
             }();
             if (!is_valid_type)
@@ -801,11 +822,15 @@ struct expr : lexy::expression_production
             }
             else
             {
-                if (op != clauf::arithmetic_op::shl && op != clauf::arithmetic_op::shr)
-                    do_usual_arithmetic_conversions(state, op.loc, left, right);
+                if (op != clauf::arithmetic_op::shl && op != clauf::arithmetic_op::shr
+                    && clauf::is_arithmetic(left->type()) && clauf::is_arithmetic(right->type()))
+                {
+                    type = do_usual_arithmetic_conversions(state, op.loc, left, right);
+                }
             }
 
-            return state.ast.create<clauf::arithmetic_expr>(op.loc, left->type(), op, left, right);
+            DRYAD_ASSERT(type != nullptr, "type should have been set at some point");
+            return state.ast.create<clauf::arithmetic_expr>(op.loc, type, op, left, right);
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
