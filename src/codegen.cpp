@@ -553,7 +553,6 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                     // And now we're comparing the distance with 0.
                     lauf_asm_inst_uint(b, 0);
                     lauf_asm_inst_call_builtin(b, lauf_lib_int_scmp);
-                    CLAUF_TODO("the sign here is probably wrong");
                 }
             }
             else
