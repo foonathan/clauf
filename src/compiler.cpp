@@ -631,7 +631,8 @@ struct expr : lexy::expression_production
             case clauf::unary_op::pre_dec:
             case clauf::unary_op::post_inc:
             case clauf::unary_op::post_dec:
-                return clauf::is_arithmetic(child->type()) && clauf::is_modifiable_lvalue(child);
+                return (clauf::is_arithmetic(child->type()) || clauf::is_pointer(child->type()))
+                       && clauf::is_modifiable_lvalue(child);
             case clauf::unary_op::address:
                 return clauf::is_lvalue(child);
             case clauf::unary_op::deref:
