@@ -832,25 +832,46 @@ struct expr : lexy::expression_production
                         type = left->type();
                         return clauf::is_integer(right->type());
                     }
-                    else
-                        return clauf::is_arithmetic(left->type())
-                               && clauf::is_arithmetic(right->type());
+                    else if (clauf::is_arithmetic(left->type())
+                             && clauf::is_arithmetic(right->type()))
+                    {
+                        type = do_usual_arithmetic_conversions(state, op.loc, left, right);
+                        return true;
+                    }
+                    return false;
 
                 case clauf::arithmetic_op::mul:
                 case clauf::arithmetic_op::div:
                 case clauf::arithmetic_op::rem:
-                    return clauf::is_arithmetic(left->type())
-                           && clauf::is_arithmetic(right->type());
+                    if (clauf::is_arithmetic(left->type()) && clauf::is_arithmetic(right->type()))
+                    {
+                        type = do_usual_arithmetic_conversions(state, op.loc, left, right);
+                        return true;
+                    }
+                    return false;
+
                 case clauf::arithmetic_op::band:
                 case clauf::arithmetic_op::bor:
                 case clauf::arithmetic_op::bxor:
+                    if (clauf::is_integer(left->type()) && clauf::is_integer(right->type()))
+                    {
+                        type = do_usual_arithmetic_conversions(state, op.loc, left, right);
+                        return true;
+                    }
+                    return false;
+
                 case clauf::arithmetic_op::shl:
                 case clauf::arithmetic_op::shr:
-                    return clauf::is_integer(left->type()) && clauf::is_integer(right->type());
+                    if (clauf::is_integer(left->type()) && clauf::is_integer(right->type()))
+                    {
+                        type = left->type();
+                        return true;
+                    }
+                    return false;
 
                 case clauf::arithmetic_op::ptrdiff:
                     CLAUF_UNREACHABLE("not an operator that is parsed");
-                    break;
+                    return false;
                 }
             }();
             if (!is_valid_type)
@@ -860,14 +881,6 @@ struct expr : lexy::expression_production
                     .finish();
 
                 type = left->type();
-            }
-            else
-            {
-                if (op != clauf::arithmetic_op::shl && op != clauf::arithmetic_op::shr
-                    && clauf::is_arithmetic(left->type()) && clauf::is_arithmetic(right->type()))
-                {
-                    type = do_usual_arithmetic_conversions(state, op.loc, left, right);
-                }
             }
 
             DRYAD_ASSERT(type != nullptr, "type should have been set at some point");
