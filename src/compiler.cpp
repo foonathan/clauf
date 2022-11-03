@@ -121,9 +121,11 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
     else if (clauf::is_pointer(target_type) && clauf::is_pointer(value->type()))
     {
         auto target_pointee_type
-            = dryad::node_cast<clauf::pointer_type>(target_type)->pointee_type();
+            = dryad::node_cast<clauf::pointer_type>(clauf::unqualified_type_of(target_type))
+                  ->pointee_type();
         auto value_pointee_type
-            = dryad::node_cast<clauf::pointer_type>(value->type())->pointee_type();
+            = dryad::node_cast<clauf::pointer_type>(clauf::unqualified_type_of(value->type()))
+                  ->pointee_type();
         if (clauf::is_void(target_pointee_type) || clauf::is_void(value_pointee_type))
             return state.ast.create<clauf::cast_expr>(loc, target_type, value);
 
@@ -138,6 +140,9 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
             if ((value_qualifiers & clauf::qualified_type::volatile_) != 0)
                 all_qualifiers_present
                     &= (target_qualifiers & clauf::qualified_type::volatile_) != 0;
+            if ((value_qualifiers & clauf::qualified_type::restrict_) != 0)
+                all_qualifiers_present
+                    &= (target_qualifiers & clauf::qualified_type::restrict_) != 0;
 
             if (all_qualifiers_present)
                 return state.ast.create<clauf::cast_expr>(loc, target_type, value);
@@ -284,7 +289,8 @@ constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
 constexpr auto kw_type_qualifiers
     = lexy::symbol_table<clauf::qualified_type::qualifier_t> //
           .map(LEXY_LIT("const"), clauf::qualified_type::const_)
-          .map(LEXY_LIT("volatile"), clauf::qualified_type::volatile_);
+          .map(LEXY_LIT("volatile"), clauf::qualified_type::volatile_)
+          .map(LEXY_LIT("restrict"), clauf::qualified_type::restrict_);
 
 constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
@@ -1288,6 +1294,9 @@ struct type_specifier_list
 
                   if (qualifiers != clauf::qualified_type::unqualified)
                   {
+                      if ((qualifiers & clauf::qualified_type::restrict_) != 0
+                          && !clauf::is_pointer(unqualified_ty))
+                          log_error();
                       return state.ast.types.build([&](type_forest::node_creator creator) {
                           return creator.create<clauf::qualified_type>(qualifiers,
                                                                        clone(creator,

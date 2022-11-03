@@ -112,6 +112,7 @@ public:
         unqualified = 0,
         const_      = 1 << 0,
         volatile_   = 1 << 1,
+        restrict_   = 1 << 2,
 
         const_volatile = const_ | volatile_,
     };

@@ -414,6 +414,8 @@ void dump_type(const clauf::type* ty)
                 std::printf("const ");
             if ((ty->qualifiers() & clauf::qualified_type::volatile_) != 0)
                 std::printf("volatile ");
+            if ((ty->qualifiers() & clauf::qualified_type::restrict_) != 0)
+                std::printf("restrict ");
         });
 }
 } // namespace
