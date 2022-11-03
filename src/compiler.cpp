@@ -683,7 +683,9 @@ struct expr : lexy::expression_production
         }
         else if (op == clauf::unary_op::deref)
         {
-            auto type = dryad::node_cast<clauf::pointer_type>(child->type())->pointee_type();
+            auto type
+                = dryad::node_cast<clauf::pointer_type>(clauf::unqualified_type_of(child->type()))
+                      ->pointee_type();
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
         }
         else if (op == clauf::unary_op::lnot)
@@ -1299,6 +1301,16 @@ struct type_specifier_list
               });
 };
 
+struct type_qualifier_list
+{
+    static constexpr auto rule  = dsl::list(dsl::symbol<kw_type_qualifiers>);
+    static constexpr auto value = lexy::fold<
+        clauf::qualified_type::qualifier_t>(clauf::qualified_type::unqualified, [](auto lhs,
+                                                                                   auto rhs) {
+        return clauf::qualified_type::qualifier_t(lhs | rhs);
+    });
+};
+
 template <bool Abstract>
 struct declarator : lexy::expression_production
 {
@@ -1309,8 +1321,9 @@ struct declarator : lexy::expression_production
 
     struct pointer_declarator : dsl::prefix_op
     {
-        static constexpr auto op = dsl::op<pointer_declarator>(dsl::lit_c<'*'>);
-        using operand            = dsl::atom;
+        static constexpr auto op
+            = dsl::op<pointer_declarator>(dsl::lit_c<'*'> >> dsl::opt(dsl::p<type_qualifier_list>));
+        using operand = dsl::atom;
     };
 
     struct function_declarator : dsl::postfix_op
@@ -1342,8 +1355,12 @@ struct declarator : lexy::expression_production
            clauf::parameter_list params) {
             return state.decl_tree.create<clauf::function_declarator>(child, params);
         },
-        [](compiler_state& state, pointer_declarator, clauf::declarator* child) {
-            return state.decl_tree.create<clauf::pointer_declarator>(child);
+        [](compiler_state&                                   state, pointer_declarator,
+           std::optional<clauf::qualified_type::qualifier_t> quals, clauf::declarator* child) {
+            return state.decl_tree
+                .create<clauf::pointer_declarator>(quals.value_or(
+                                                       clauf::qualified_type::unqualified),
+                                                   child);
         });
 };
 

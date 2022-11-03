@@ -199,6 +199,7 @@ bool is_complete_object_type(const type* ty);
 bool is_pointer_to_complete_object_type(const type* ty);
 
 clauf::qualified_type::qualifier_t type_qualifiers_of(const type* ty);
+const type*                        unqualified_type_of(const type* ty);
 
 /// Returns -1 for non-integers.
 unsigned integer_rank_of(const type* ty);
@@ -895,12 +896,23 @@ class pointer_declarator
 : public dryad::basic_node<declarator_kind::pointer, dryad::container_node<declarator>>
 {
 public:
-    explicit pointer_declarator(dryad::node_ctor ctor, declarator* child) : node_base(ctor)
+    explicit pointer_declarator(dryad::node_ctor ctor, clauf::qualified_type::qualifier_t quals,
+                                declarator* child)
+    : node_base(ctor)
     {
+        set_qualifiers_impl(quals);
         insert_child_after(nullptr, child);
     }
 
     DRYAD_CHILD_NODE_GETTER(declarator, child, nullptr)
+
+    clauf::qualified_type::qualifier_t qualifiers() const
+    {
+        return qualifiers_impl();
+    }
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(clauf::qualified_type::qualifier_t, qualifiers_impl);
 };
 
 class init_declarator

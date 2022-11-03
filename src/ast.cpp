@@ -78,16 +78,18 @@ bool clauf::is_same_modulo_qualifiers(const type* lhs, const type* rhs)
         return false;
 }
 
-bool clauf::is_void(const type* ty)
+bool clauf::is_void(const type* ty_)
 {
+    auto ty = clauf::unqualified_type_of(ty_);
     if (auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty))
         return builtin->type_kind() == clauf::builtin_type::void_;
     else
         return false;
 }
 
-bool clauf::is_signed_int(const type* ty)
+bool clauf::is_signed_int(const type* ty_)
 {
+    auto ty      = clauf::unqualified_type_of(ty_);
     auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty);
     if (builtin == nullptr)
         return false;
@@ -109,8 +111,9 @@ bool clauf::is_signed_int(const type* ty)
         return false;
     }
 }
-bool clauf::is_unsigned_int(const type* ty)
+bool clauf::is_unsigned_int(const type* ty_)
 {
+    auto ty      = clauf::unqualified_type_of(ty_);
     auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty);
     if (builtin == nullptr)
         return false;
@@ -142,8 +145,9 @@ bool clauf::is_arithmetic(const type* ty)
     return is_integer(ty);
 }
 
-bool clauf::is_pointer(const type* ty)
+bool clauf::is_pointer(const type* ty_)
 {
+    auto ty = clauf::unqualified_type_of(ty_);
     return dryad::node_has_kind<clauf::pointer_type>(ty);
 }
 
@@ -152,16 +156,18 @@ bool clauf::is_scalar(const type* ty)
     return clauf::is_arithmetic(ty) || clauf::is_pointer(ty);
 }
 
-bool clauf::is_complete_object_type(const type* ty)
+bool clauf::is_complete_object_type(const type* ty_)
 {
+    auto ty = clauf::unqualified_type_of(ty_);
     if (dryad::node_has_kind<clauf::function_type>(ty))
         return false;
 
     return !clauf::is_void(ty);
 }
 
-bool clauf::is_pointer_to_complete_object_type(const type* ty)
+bool clauf::is_pointer_to_complete_object_type(const type* ty_)
 {
+    auto ty = clauf::unqualified_type_of(ty_);
     if (!clauf::is_pointer(ty))
         return false;
 
@@ -175,6 +181,13 @@ clauf::qualified_type::qualifier_t clauf::type_qualifiers_of(const type* ty)
         return qualified->qualifiers();
     else
         return clauf::qualified_type::unqualified;
+}
+const clauf::type* clauf::unqualified_type_of(const type* ty)
+{
+    if (auto qualified = dryad::node_try_cast<clauf::qualified_type>(ty))
+        return qualified->unqualified_type();
+    else
+        return ty;
 }
 
 unsigned clauf::integer_rank_of(const type* ty)
@@ -268,7 +281,11 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
         [&](const clauf::pointer_declarator* decl) {
             auto child_type = get_type(types, decl->child(), decl_type);
             return types.build([&](clauf::type_forest::node_creator creator) {
-                return creator.create<clauf::pointer_type>(clauf::clone(creator, child_type));
+                clauf::type* result
+                    = creator.create<clauf::pointer_type>(clauf::clone(creator, child_type));
+                if (decl->qualifiers() != clauf::qualified_type::unqualified)
+                    result = creator.create<clauf::qualified_type>(decl->qualifiers(), result);
+                return result;
             });
         },
         [&](const clauf::function_declarator* decl) {
