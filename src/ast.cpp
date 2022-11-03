@@ -21,6 +21,10 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
                 params.push_back(clone(creator, param));
 
             return creator.create<clauf::function_type>(clone(creator, ty->return_type()), params);
+        },
+        [&](const clauf::qualified_type* ty) -> clauf::type* {
+            auto unqual_ty = clone(creator, ty->unqualified_type());
+            return creator.create<clauf::qualified_type>(ty->qualifiers(), unqual_ty);
         });
 }
 
@@ -59,6 +63,19 @@ bool clauf::is_same(const type* lhs, const type* rhs)
         return true;
 
     return type_hasher::is_equal_base(lhs, rhs);
+}
+
+bool clauf::is_same_modulo_qualifiers(const type* lhs, const type* rhs)
+{
+    if (clauf::is_same(lhs, rhs))
+        return true;
+
+    if (auto qualified_lhs = dryad::node_try_cast<clauf::qualified_type>(lhs))
+        return clauf::is_same_modulo_qualifiers(qualified_lhs->unqualified_type(), rhs);
+    else if (auto qualified_rhs = dryad::node_try_cast<clauf::qualified_type>(rhs))
+        return clauf::is_same_modulo_qualifiers(lhs, qualified_rhs->unqualified_type());
+    else
+        return false;
 }
 
 bool clauf::is_void(const type* ty)
@@ -152,6 +169,14 @@ bool clauf::is_pointer_to_complete_object_type(const type* ty)
         dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
 }
 
+clauf::qualified_type::qualifier_t clauf::type_qualifiers_of(const type* ty)
+{
+    if (auto qualified = dryad::node_try_cast<clauf::qualified_type>(ty))
+        return qualified->qualifiers();
+    else
+        return clauf::qualified_type::unqualified;
+}
+
 unsigned clauf::integer_rank_of(const type* ty)
 {
     if (!dryad::node_has_kind<clauf::builtin_type>(ty))
@@ -194,7 +219,8 @@ bool clauf::is_lvalue(const expr* e)
 
 bool clauf::is_modifiable_lvalue(const expr* e)
 {
-    return is_lvalue(e) && is_complete_object_type(e->type());
+    return is_lvalue(e) && is_complete_object_type(e->type())
+           && (type_qualifiers_of(e->type()) & clauf::qualified_type::const_) == 0;
 }
 
 bool clauf::is_nullptr_constant(const expr* e)
@@ -365,6 +391,12 @@ void dump_type(const clauf::type* ty)
                 visitor(param);
             std::printf(") -> ");
             visitor(ty->return_type());
+        },
+        [](dryad::traverse_event_enter, const clauf::qualified_type* ty) {
+            if ((ty->qualifiers() & clauf::qualified_type::const_) != 0)
+                std::printf("const ");
+            if ((ty->qualifiers() & clauf::qualified_type::volatile_) != 0)
+                std::printf("volatile ");
         });
 }
 } // namespace

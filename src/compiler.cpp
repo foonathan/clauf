@@ -9,6 +9,7 @@
 #include <lexy/dsl.hpp>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <clauf/assert.hpp>
@@ -109,7 +110,7 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
                                       clauf::assignment_op op, const clauf::type* target_type,
                                       clauf::expr* value)
 {
-    if (clauf::is_same(target_type, value->type()))
+    if (clauf::is_same_modulo_qualifiers(target_type, value->type()))
         return value;
 
     if ((clauf::is_arithmetic(target_type) && clauf::is_arithmetic(value->type()))
@@ -125,6 +126,22 @@ clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc
             = dryad::node_cast<clauf::pointer_type>(value->type())->pointee_type();
         if (clauf::is_void(target_pointee_type) || clauf::is_void(value_pointee_type))
             return state.ast.create<clauf::cast_expr>(loc, target_type, value);
+
+        auto target_qualifiers = clauf::type_qualifiers_of(target_pointee_type);
+        auto value_qualifiers  = clauf::type_qualifiers_of(value_pointee_type);
+        if (clauf::is_same_modulo_qualifiers(target_pointee_type, value_pointee_type))
+        {
+            // TODO: figure out nice bit hack to do the same
+            auto all_qualifiers_present = true;
+            if ((value_qualifiers & clauf::qualified_type::const_) != 0)
+                all_qualifiers_present &= (target_qualifiers & clauf::qualified_type::const_) != 0;
+            if ((value_qualifiers & clauf::qualified_type::volatile_) != 0)
+                all_qualifiers_present
+                    &= (target_qualifiers & clauf::qualified_type::volatile_) != 0;
+
+            if (all_qualifiers_present)
+                return state.ast.create<clauf::cast_expr>(loc, target_type, value);
+        }
     }
     else if (clauf::is_pointer(target_type) && clauf::is_integer(value->type())
              && (op == clauf::assignment_op::add || op == clauf::assignment_op::sub))
@@ -164,10 +181,11 @@ clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, cl
             return expr->type();
         }
     }();
+
     if (clauf::is_same(target_type, expr->type()))
         return expr;
-
-    return state.ast.create<clauf::cast_expr>(loc, target_type, expr);
+    else
+        return state.ast.create<clauf::cast_expr>(loc, target_type, expr);
 }
 
 // Performs the usual arithmetic conversions on both operands.
@@ -178,7 +196,7 @@ const clauf::type* do_usual_arithmetic_conversions(compiler_state& state, clauf:
 
     lhs = do_integer_promotion(state, loc, lhs);
     rhs = do_integer_promotion(state, loc, rhs);
-    if (clauf::is_same(lhs->type(), rhs->type()))
+    if (clauf::is_same_modulo_qualifiers(lhs->type(), rhs->type()))
         return lhs->type();
 
     if (clauf::is_signed_int(lhs->type()) == clauf::is_signed_int(rhs->type()))
@@ -263,6 +281,10 @@ constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
                                         .map(LEXY_LIT("signed"), clauf::type_specifier::signed_)
                                         .map(LEXY_LIT("unsigned"), clauf::type_specifier::unsigned_)
                                         .map(LEXY_LIT("short"), clauf::type_specifier::short_);
+constexpr auto kw_type_qualifiers
+    = lexy::symbol_table<clauf::qualified_type::qualifier_t> //
+          .map(LEXY_LIT("const"), clauf::qualified_type::const_)
+          .map(LEXY_LIT("volatile"), clauf::qualified_type::volatile_);
 
 constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
@@ -278,7 +300,7 @@ struct identifier
     static constexpr auto rule
         = id.reserve(kw_nullptr, dsl::literal_set(kw_type_ops), kw_return, kw_break, kw_continue,
                      kw_if, kw_else, kw_while, kw_do, dsl::literal_set(kw_type_specifiers),
-                     dsl::literal_set(kw_builtin_exprs));
+                     dsl::literal_set(kw_type_qualifiers), dsl::literal_set(kw_builtin_exprs));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
 
@@ -958,7 +980,7 @@ struct expr : lexy::expression_production
             {
                 do_usual_arithmetic_conversions(state, op.loc, if_true, if_false);
             }
-            else if (!clauf::is_same(if_true->type(), if_false->type()))
+            else if (!clauf::is_same_modulo_qualifiers(if_true->type(), if_false->type()))
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error,
@@ -1146,101 +1168,133 @@ struct parameter_list;
 
 struct type_specifier_list
 {
-    static constexpr auto rule = dsl::position(dsl::list(dsl::symbol<kw_type_specifiers>));
+    static constexpr auto rule = dsl::position(
+        dsl::list(dsl::symbol<kw_type_specifiers> | dsl::symbol<kw_type_qualifiers>));
     static constexpr auto value
-        = lexy::as_list<std::vector<clauf::type_specifier>> >> callback<clauf::type*>(
+        = lexy::as_list<std::vector<std::variant<
+              clauf::type_specifier, clauf::qualified_type::qualifier_t>>> >> callback<clauf::
+                                                                                           type*>(
               [](compiler_state& state, const char* pos,
-                 std::vector<clauf::type_specifier>&& specifiers) -> clauf::type* {
+                 auto&& specifiers_qualifiers) -> clauf::type* {
                   std::optional<clauf::builtin_type::type_kind_t> base_type;
                   std::optional<bool>                             is_signed;
                   int                                             short_count = 0;
+                  int qualifiers = clauf::qualified_type::unqualified;
 
                   auto log_error = [&] {
                       state.logger
                           .log(clauf::diagnostic_kind::error,
-                               "invalid combination of type specifiers")
+                               "invalid combination of type specifiers or qualifiers")
                           .annotation(clauf::annotation_kind::primary, pos, "here")
                           .finish();
                   };
 
-                  for (auto specifier : specifiers)
-                      switch (specifier)
-                      {
-                      case clauf::type_specifier::void_:
-                          if (base_type.has_value())
-                              log_error();
-                          base_type = clauf::builtin_type::void_;
-                          break;
-                      case clauf::type_specifier::int_:
-                          if (base_type.has_value())
-                              log_error();
-                          base_type = clauf::builtin_type::sint64;
-                          break;
-                      case clauf::type_specifier::char_:
-                          if (base_type.has_value())
-                              log_error();
-                          // TODO: set base type to char, not signed char
-                          base_type = clauf::builtin_type::sint8;
-                          break;
-
-                      case clauf::type_specifier::signed_:
-                          if (is_signed.has_value())
-                              log_error();
-                          is_signed = true;
-                          break;
-                      case clauf::type_specifier::unsigned_:
-                          if (is_signed.has_value())
-                              log_error();
-                          is_signed = false;
-                          break;
-                      case clauf::type_specifier::short_:
-                          if (short_count == 2)
-                              log_error();
-                          ++short_count;
-                          break;
-                      }
-
-                  switch (base_type.value_or(clauf::builtin_type::sint64))
+                  for (auto specifier_or_qualifier : specifiers_qualifiers)
                   {
-                  case builtin_type::void_:
-                      if (is_signed.has_value())
-                          log_error();
-
-                      return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                          clauf::builtin_type::void_);
-
-                  case builtin_type::sint8:
-                      if (short_count > 0)
-                          log_error();
-
-                      if (is_signed.value_or(true))
-                          return state.ast.create(clauf::builtin_type::sint8);
-                      else
-                          return state.ast.create(clauf::builtin_type::uint8);
-
-                  case builtin_type::sint64:
-                      if (is_signed.value_or(true))
+                      if (std::holds_alternative<clauf::type_specifier>(specifier_or_qualifier))
                       {
-                          if (short_count == 0)
-                              return state.ast.create(clauf::builtin_type::sint64);
-                          else if (short_count == 1)
-                              return state.ast.create(clauf::builtin_type::sint32);
-                          else
-                              return state.ast.create(clauf::builtin_type::sint16);
+                          switch (std::get<clauf::type_specifier>(specifier_or_qualifier))
+                          {
+                          case clauf::type_specifier::void_:
+                              if (base_type.has_value())
+                                  log_error();
+                              base_type = clauf::builtin_type::void_;
+                              break;
+                          case clauf::type_specifier::int_:
+                              if (base_type.has_value())
+                                  log_error();
+                              base_type = clauf::builtin_type::sint64;
+                              break;
+                          case clauf::type_specifier::char_:
+                              if (base_type.has_value())
+                                  log_error();
+                              // TODO: set base type to char, not signed char
+                              base_type = clauf::builtin_type::sint8;
+                              break;
+
+                          case clauf::type_specifier::signed_:
+                              if (is_signed.has_value())
+                                  log_error();
+                              is_signed = true;
+                              break;
+                          case clauf::type_specifier::unsigned_:
+                              if (is_signed.has_value())
+                                  log_error();
+                              is_signed = false;
+                              break;
+                          case clauf::type_specifier::short_:
+                              if (short_count == 2)
+                                  log_error();
+                              ++short_count;
+                              break;
+                          }
                       }
                       else
                       {
-                          if (short_count == 0)
-                              return state.ast.create(clauf::builtin_type::uint64);
-                          else if (short_count == 1)
-                              return state.ast.create(clauf::builtin_type::uint32);
-                          else
-                              return state.ast.create(clauf::builtin_type::uint16);
+                          auto qual = std::get<clauf::qualified_type::qualifier_t>(
+                              specifier_or_qualifier);
+                          if ((qualifiers & qual) != 0)
+                              log_error();
+                          qualifiers |= qual;
                       }
+                  }
 
-                  default:
-                      CLAUF_UNREACHABLE("not a base type");
-                      return nullptr;
+                  auto unqualified_ty = [&]() -> clauf::type* {
+                      switch (base_type.value_or(clauf::builtin_type::sint64))
+                      {
+                      case builtin_type::void_:
+                          if (is_signed.has_value())
+                              log_error();
+
+                          return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                              clauf::builtin_type::void_);
+
+                      case builtin_type::sint8:
+                          if (short_count > 0)
+                              log_error();
+
+                          if (is_signed.value_or(true))
+                              return state.ast.create(clauf::builtin_type::sint8);
+                          else
+                              return state.ast.create(clauf::builtin_type::uint8);
+
+                      case builtin_type::sint64:
+                          if (is_signed.value_or(true))
+                          {
+                              if (short_count == 0)
+                                  return state.ast.create(clauf::builtin_type::sint64);
+                              else if (short_count == 1)
+                                  return state.ast.create(clauf::builtin_type::sint32);
+                              else
+                                  return state.ast.create(clauf::builtin_type::sint16);
+                          }
+                          else
+                          {
+                              if (short_count == 0)
+                                  return state.ast.create(clauf::builtin_type::uint64);
+                              else if (short_count == 1)
+                                  return state.ast.create(clauf::builtin_type::uint32);
+                              else
+                                  return state.ast.create(clauf::builtin_type::uint16);
+                          }
+
+                      default:
+                          CLAUF_UNREACHABLE("not a base type");
+                          return nullptr;
+                      }
+                  }();
+
+                  if (qualifiers != clauf::qualified_type::unqualified)
+                  {
+                      return state.ast.types.build([&](type_forest::node_creator creator) {
+                          return creator.create<clauf::qualified_type>(qualifiers,
+                                                                       clone(creator,
+                                                                             unqualified_ty));
+                      });
+                  }
+                  else
+                  {
+                      return unqualified_ty;
                   }
               });
 };

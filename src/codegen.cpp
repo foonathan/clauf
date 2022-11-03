@@ -83,7 +83,8 @@ lauf_asm_type codegen_type(const clauf::type* ty)
         [](const clauf::function_type*) {
             CLAUF_UNREACHABLE("not the type of a variable");
             return lauf_asm_type_value;
-        });
+        },
+        [](const clauf::qualified_type* ty) { return codegen_type(ty->unqualified_type()); });
 }
 
 template <typename Op, typename Expr>

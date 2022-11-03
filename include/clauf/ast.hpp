@@ -22,6 +22,7 @@ enum class type_node_kind
     builtin_type,
     pointer_type,
     function_type,
+    qualified_type,
 };
 
 /// The base class of all C types in the AST.
@@ -101,7 +102,39 @@ public:
     DRYAD_CHILD_NODE_RANGE_GETTER(type, parameters, return_type(), this)
 };
 
-struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_type, function_type>
+/// A type with a cv qualifier.
+class qualified_type
+: public dryad::basic_node<type_node_kind::qualified_type, dryad::container_node<type>>
+{
+public:
+    enum qualifier_t : std::uint16_t
+    {
+        unqualified = 0,
+        const_      = 1 << 0,
+        volatile_   = 1 << 1,
+
+        const_volatile = const_ | volatile_,
+    };
+
+    explicit qualified_type(dryad::node_ctor ctor, int quals, clauf::type* child) : node_base(ctor)
+    {
+        set_qualifiers_impl(qualifier_t(quals));
+        insert_child_after(nullptr, child);
+    }
+
+    qualifier_t qualifiers() const
+    {
+        return qualifiers_impl();
+    }
+
+    DRYAD_CHILD_NODE_GETTER(type, unqualified_type, nullptr)
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(qualifier_t, qualifiers_impl);
+};
+
+struct type_hasher
+: dryad::node_hasher_base<type_hasher, builtin_type, pointer_type, function_type, qualified_type>
 {
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm& hasher, const builtin_type* n)
@@ -119,6 +152,11 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm&, const function_type*)
     {}
+    template <typename HashAlgorithm>
+    static void hash(HashAlgorithm& hasher, const qualified_type* ty)
+    {
+        hasher.hash_scalar(ty->qualifiers());
+    }
 
     static bool is_equal(const builtin_type* lhs, const builtin_type* rhs)
     {
@@ -136,6 +174,10 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
     {
         return true;
     }
+    static bool is_equal(const qualified_type* lhs, const qualified_type* rhs)
+    {
+        return lhs->qualifiers() == rhs->qualifiers();
+    }
 };
 using type_forest = dryad::hash_forest<type, type_hasher>;
 
@@ -143,6 +185,7 @@ type* clone(type_forest::node_creator creator, const type* ty);
 type* make_unsigned(type_forest::node_creator creator, const type* ty);
 
 bool is_same(const type* lhs, const type* rhs);
+bool is_same_modulo_qualifiers(const type* lhs, const type* rhs);
 
 bool is_void(const type* ty);
 bool is_signed_int(const type* ty);
@@ -154,6 +197,8 @@ bool is_scalar(const type* ty);
 
 bool is_complete_object_type(const type* ty);
 bool is_pointer_to_complete_object_type(const type* ty);
+
+clauf::qualified_type::qualifier_t type_qualifiers_of(const type* ty);
 
 /// Returns -1 for non-integers.
 unsigned integer_rank_of(const type* ty);
