@@ -488,8 +488,10 @@ void clauf::dump_ast(const ast& ast)
 
                 case unary_op::address:
                     std::printf("&");
+                    break;
                 case unary_op::deref:
                     std::printf("*");
+                    break;
                 }
                 std::printf(" : ");
                 dump_type(expr->type());
