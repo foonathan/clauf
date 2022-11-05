@@ -732,9 +732,6 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
     auto b = ctx.builder;
     lauf_asm_build(b, ctx.mod, fn);
 
-    auto entry = lauf_asm_declare_block(b, static_cast<std::uint8_t>(parameter_count));
-    lauf_asm_build_block(b, entry);
-
     // We create variables for all parameters and store the value into them.
     // Since parameters have been pushed onto the stack and are thus popped in reverse,
     // we need to iterate in reverse order.
