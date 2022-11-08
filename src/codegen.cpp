@@ -6,6 +6,7 @@
 #include <cassert>
 #include <dryad/node_map.hpp>
 #include <lauf/asm/builder.h>
+#include <lauf/asm/program.h>
 #include <lauf/asm/type.h>
 #include <lauf/lib/bits.h>
 #include <lauf/lib/debug.h>
@@ -14,6 +15,8 @@
 #include <lauf/lib/memory.h>
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
+#include <lauf/runtime/memory.h>
+#include <lauf/runtime/process.h>
 #include <lauf/runtime/value.h>
 #include <lexy/input_location.hpp>
 #include <vector>
@@ -33,11 +36,12 @@ struct context
     dryad::node_map<const clauf::decl, lauf_asm_local*>             local_vars;
     dryad::node_map<const clauf::function_decl, lauf_asm_function*> functions;
 
-    context(const clauf::ast& ast)
-    : ast(&ast), mod(lauf_asm_create_module("main module")),
+    context(const clauf::ast* ast)
+    : ast(ast), mod(lauf_asm_create_module("main module")),
       builder(lauf_asm_create_builder(lauf_asm_default_build_options))
     {
-        lauf_asm_set_module_debug_path(mod, ast.input.path);
+        if (ast != nullptr)
+            lauf_asm_set_module_debug_path(mod, ast->input.path);
     }
 
     context(const context&)            = delete;
@@ -885,19 +889,90 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 }
 } // namespace
 
-lauf_asm_module* clauf::codegen(const ast& ast)
+std::vector<unsigned char> clauf::constant_eval(lauf_vm* vm, const expr* e)
 {
-    context ctx(ast);
+    context ctx(nullptr);
+    auto    type = codegen_type(e->type());
+
+    // We create a chunk that will hold the bytecode for our expression.
+    auto chunk = lauf_asm_create_chunk(ctx.mod);
+    {
+        lauf_asm_build_chunk(ctx.builder, ctx.mod, chunk, 1);
+
+        // Allocate memory to store the expression in.
+        lauf_asm_inst_uint(ctx.builder, type.layout.alignment);
+        lauf_asm_inst_uint(ctx.builder, type.layout.size);
+        lauf_asm_inst_call_builtin(ctx.builder, lauf_lib_heap_alloc);
+        // At this point, the address is on top of the stack.
+
+        // We then push the expression onto the stack.
+        codegen_expr(ctx, e);
+        // Now the stack is: [address, value]
+
+        // Store the expression in the heap memory.
+        lauf_asm_inst_pick(ctx.builder, 1);
+        lauf_asm_inst_store_field(ctx.builder, type, 0);
+
+        // Don't free heap memory when we return.
+        lauf_asm_inst_pick(ctx.builder, 0);
+        lauf_asm_inst_call_builtin(ctx.builder, lauf_lib_heap_leak);
+
+        lauf_asm_inst_return(ctx.builder);
+        lauf_asm_build_finish(ctx.builder);
+    }
+
+    // We then execute that bytecode.
+    auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
+    auto process = lauf_vm_start_process(vm, &program);
+
+    lauf_runtime_value output;
+    auto success = lauf_runtime_resume(process, lauf_runtime_get_current_fiber(process), nullptr, 0,
+                                       &output, 1);
+    CLAUF_ASSERT(success, "constant evaluation should not panic");
+
+    lauf_runtime_allocation alloc;
+    auto valid_alloc = lauf_runtime_get_allocation(process, output.as_address, &alloc);
+    CLAUF_ASSERT(valid_alloc, "we have leaked heap memory which should still be valid");
+
+    std::vector<unsigned char> result;
+    result.resize(type.layout.size);
+    std::memcpy(result.data(), alloc.ptr, type.layout.size);
+
+    auto allocator = lauf_vm_get_allocator(vm);
+    allocator.free_alloc(allocator.user_data, alloc.ptr, type.layout.size);
+    lauf_runtime_destroy_process(process);
+    lauf_asm_destroy_program(program);
+    lauf_asm_destroy_module(ctx.mod);
+
+    return result;
+}
+
+lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
+{
+    context ctx(&ast);
 
     for (auto decl : ast.root()->declarations())
         dryad::visit_node(
             decl, [&](const function_decl* decl) { codegen_function(ctx, decl); },
             [&](const variable_decl* decl) {
-                if (decl->has_initializer())
-                    CLAUF_TODO("initializers for global variables not yet supported");
+                auto layout = codegen_type(decl->type()).layout;
+                auto global = [&] {
+                    auto qualifiers = clauf::type_qualifiers_of(decl->type());
+                    auto is_const   = (qualifiers & clauf::qualified_type::const_) != 0;
 
-                auto global
-                    = lauf_asm_add_global_zero_data(ctx.mod, codegen_type(decl->type()).layout);
+                    if (decl->has_initializer())
+                    {
+                        auto init = constant_eval(vm, decl->initializer());
+                        return is_const
+                                   ? lauf_asm_add_global_const_data(ctx.mod, init.data(), layout)
+                                   : lauf_asm_add_global_mut_data(ctx.mod, init.data(), layout);
+                    }
+                    else
+                    {
+                        return lauf_asm_add_global_zero_data(ctx.mod, layout);
+                    }
+                }();
+
                 lauf_asm_set_global_debug_name(ctx.mod, global,
                                                decl->name().c_str(ctx.ast->symbols));
                 ctx.globals.insert(decl, global);

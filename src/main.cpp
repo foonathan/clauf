@@ -47,7 +47,8 @@ int main(const options& opts)
         std::putchar('\n');
     }
 
-    auto mod = codegen(*ast);
+    auto vm  = lauf_create_vm(lauf_default_vm_options);
+    auto mod = codegen(vm, *ast);
     if (opts.dump_bytecode)
     {
         std::puts("=== BYTECODE ===");
@@ -60,8 +61,6 @@ int main(const options& opts)
     auto exit_code = 0;
     if (!opts.compile_only)
     {
-        auto vm = lauf_create_vm(lauf_default_vm_options);
-
         auto main_fn = lauf_asm_find_function_by_name(mod, "main");
         if (main_fn == nullptr)
         {
@@ -82,10 +81,10 @@ int main(const options& opts)
         if (!lauf_vm_execute_oneshot(vm, program, nullptr, &return_code))
             return 1;
         exit_code = static_cast<int>(return_code.as_sint);
-
-        lauf_destroy_vm(vm);
     }
 
+    lauf_asm_destroy_module(mod);
+    lauf_destroy_vm(vm);
     // Exit code 70 is EX_SOFTWARE in sysexits.h
     return clauf::_detail::todo_reached ? 70 : exit_code;
 }

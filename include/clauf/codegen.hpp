@@ -5,12 +5,17 @@
 #define CLAUF_CODEGEN_HPP_INCLUDED
 
 #include <lauf/asm/module.h>
+#include <lauf/vm.h>
+#include <vector>
 
 namespace clauf
 {
 struct ast;
+class expr;
 
-lauf_asm_module* codegen(const ast& ast);
+std::vector<unsigned char> constant_eval(lauf_vm* vm, const expr* e);
+
+lauf_asm_module* codegen(lauf_vm* vm, const ast& ast);
 } // namespace clauf
 
 #endif // CLAUF_CODEGEN_HPP_INCLUDED
