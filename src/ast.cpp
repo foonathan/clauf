@@ -236,6 +236,19 @@ bool clauf::is_modifiable_lvalue(const expr* e)
            && (type_qualifiers_of(e->type()) & clauf::qualified_type::const_) == 0;
 }
 
+bool clauf::is_static_lvalue(const expr* e)
+{
+    if (auto id = dryad::node_try_cast<identifier_expr>(e))
+    {
+        if (auto var = dryad::node_try_cast<variable_decl>(id->declaration()))
+            return var->has_static_storage_duration();
+        else if (dryad::node_has_kind<function_decl>(id->declaration()))
+            return true;
+    }
+
+    return false;
+}
+
 bool clauf::is_nullptr_constant(const expr* e)
 {
     if (auto integer_constant = dryad::node_try_cast<integer_constant_expr>(e))
@@ -253,6 +266,136 @@ bool clauf::is_nullptr_constant(const expr* e)
     {
         return dryad::node_has_kind<nullptr_constant_expr>(e);
     }
+}
+
+bool clauf::is_named_constant(const expr*)
+{
+    return false;
+}
+
+bool clauf::is_arithmetic_constant_expr(const expr* e)
+{
+    if (!is_arithmetic(e->type()))
+        return false;
+
+    return dryad::visit_node_all(
+        e, [](const nullptr_constant_expr*) { return false; },
+        [](const integer_constant_expr*) { return true; },
+        [](const type_constant_expr*) { return true; }, [](const builtin_expr*) { return false; },
+        [](const identifier_expr* e) { return is_named_constant(e); },
+        [](const function_call_expr*) { return false; },
+        [](const cast_expr* e) { return is_arithmetic_constant_expr(e->child()); },
+        [](const unary_expr* e) {
+            switch (e->op())
+            {
+            case unary_op::plus:
+            case unary_op::neg:
+            case unary_op::bnot:
+            case unary_op::lnot:
+                break;
+
+            case unary_op::pre_inc:
+            case unary_op::pre_dec:
+            case unary_op::post_inc:
+            case unary_op::post_dec:
+                // These ones are explicitly called out in the standard.
+            case unary_op::address:
+                // &foo does not have arithmetic type, so can't be an arithmetic constant expr.
+            case unary_op::deref:
+                // For *foo the operand does not have arithmetic type, so it can't be an arithmetic
+                // constant expr.
+                return false;
+            }
+
+            return is_arithmetic_constant_expr(e->child());
+        },
+        [](const arithmetic_expr* e) {
+            return is_arithmetic_constant_expr(e->left())
+                   && is_arithmetic_constant_expr(e->right());
+        },
+        [](const comparison_expr* e) {
+            return is_arithmetic_constant_expr(e->left())
+                   && is_arithmetic_constant_expr(e->right());
+        },
+        [](const sequenced_expr* e) {
+            switch (e->op())
+            {
+            case sequenced_op::land:
+            case sequenced_op::lor:
+                break;
+            case sequenced_op::comma:
+                return false;
+            }
+            return is_arithmetic_constant_expr(e->left())
+                   && is_arithmetic_constant_expr(e->right());
+        },
+        [](const assignment_expr*) { return false; },
+        [](const conditional_expr* e) {
+            return is_arithmetic_constant_expr(e->condition())
+                   && is_arithmetic_constant_expr(e->if_true())
+                   && is_arithmetic_constant_expr(e->if_false());
+        });
+}
+
+bool clauf::is_integer_constant_expr(const expr* e)
+{
+    // Integer constant expression are arithmetic constant expressions of integer type, except for
+    // the following edge case where floating point numbers have to be the immediate operand of a
+    // cast:
+    // * integer constant expr: (int)3.14
+    // * not an integer constant expr: (int)(3.14 + 1)
+    //
+    // We're not bothering to check that for now, since we don't have float anyway.
+    return is_arithmetic_constant_expr(e) && is_integer(e->type());
+}
+
+bool clauf::is_address_constant(const expr* e)
+{
+    if (is_nullptr_constant(e))
+        return true;
+    else if (auto unary = dryad::node_try_cast<unary_expr>(e))
+        return unary->op() == unary_op::address && is_static_lvalue(unary->child());
+    else if (auto cast = dryad::node_try_cast<cast_expr>(e))
+        return is_pointer(cast->type()) && is_integer_constant_expr(cast->child());
+    else
+        // TODO: expression of array or function type are address constant
+        return false;
+}
+
+bool clauf::is_address_constant_for_complete_type(const expr* e)
+{
+    if (!is_address_constant(e))
+        return false;
+
+    auto type = e->type();
+    if (!is_pointer(type))
+        // Address constant for nullptr.
+        return false;
+
+    auto pointer = dryad::node_cast<pointer_type>(unqualified_type_of(type));
+    return is_complete_object_type(pointer->pointee_type());
+}
+
+bool clauf::is_address_constant_with_offset(const expr* e)
+{
+    if (auto arithmetic = dryad::node_try_cast<arithmetic_expr>(e))
+    {
+        if (arithmetic->op() != arithmetic_op::add && arithmetic->op() != arithmetic_op::sub)
+            return false;
+
+        return (is_address_constant_for_complete_type(arithmetic->left())
+                && is_integer_constant_expr(arithmetic->right()))
+               || (is_address_constant_for_complete_type(arithmetic->right())
+                   && is_integer_constant_expr(arithmetic->left()));
+    }
+
+    return false;
+}
+
+bool clauf::is_constant_expr(const expr* e)
+{
+    return is_named_constant(e) || is_arithmetic_constant_expr(e) || is_address_constant(e)
+           || is_address_constant_with_offset(e);
 }
 
 clauf::name clauf::get_name(const declarator* decl)

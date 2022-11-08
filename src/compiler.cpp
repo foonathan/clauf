@@ -1422,8 +1422,9 @@ struct declaration
     static clauf::decl* create_non_init_declaration(compiler_state& state, clauf::type* decl_type,
                                                     const clauf::declarator* declarator)
     {
-        auto name = get_name(declarator);
-        auto type = get_type(state.ast.types, declarator, decl_type);
+        auto name                        = get_name(declarator);
+        auto type                        = get_type(state.ast.types, declarator, decl_type);
+        auto has_static_storage_duration = state.current_scope == &state.global_scope;
 
         return dryad::visit_node_all(
             declarator,
@@ -1437,10 +1438,12 @@ struct declaration
                         .finish();
                 }
 
-                return state.ast.create<clauf::variable_decl>(name.loc, name.symbol, type);
+                return state.ast.create<clauf::variable_decl>(name.loc, has_static_storage_duration,
+                                                              name.symbol, type);
             },
             [&](const clauf::pointer_declarator*) -> clauf::decl* {
-                return state.ast.create<clauf::variable_decl>(name.loc, name.symbol, type);
+                return state.ast.create<clauf::variable_decl>(name.loc, has_static_storage_duration,
+                                                              name.symbol, type);
             },
             [&](const clauf::function_declarator* decl) -> clauf::decl* {
                 return state.ast.create<clauf::function_decl>(name.loc, name.symbol, type,
@@ -1448,30 +1451,41 @@ struct declaration
             });
     }
 
-    static constexpr auto value
-        = callback<clauf::decl_list>([](compiler_state& state, clauf::type* decl_type,
-                                        const clauf::declarator_list& declarators) {
-              clauf::decl_list result;
-              for (auto declarator : declarators)
-              {
-                  if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
-                  {
-                      auto decl     = create_non_init_declaration(state, decl_type, init->child());
-                      auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
-                      auto converted_init
-                          = do_assignment_conversion(state, state.ast.location_of(decl),
-                                                     assignment_op::none, decl->type(),
-                                                     init->initializer());
-                      var_decl->set_initializer(converted_init);
-                      result.push_back(decl);
-                  }
-                  else
-                  {
-                      result.push_back(create_non_init_declaration(state, decl_type, declarator));
-                  }
-              }
-              return result;
-          });
+    static constexpr auto value = callback<clauf::decl_list>([](compiler_state& state,
+                                                                clauf::type*    decl_type,
+                                                                const clauf::declarator_list&
+                                                                    declarators) {
+        clauf::decl_list result;
+        for (auto declarator : declarators)
+        {
+            if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
+            {
+                auto decl           = create_non_init_declaration(state, decl_type, init->child());
+                auto var_decl       = dryad::node_cast<clauf::variable_decl>(decl);
+                auto converted_init = do_assignment_conversion(state, state.ast.location_of(decl),
+                                                               assignment_op::none, decl->type(),
+                                                               init->initializer());
+                var_decl->set_initializer(converted_init);
+                result.push_back(decl);
+
+                if (var_decl->has_static_storage_duration()
+                    && !clauf::is_constant_expr(converted_init))
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error,
+                             "initializer for global variable needs to be a constant expression")
+                        .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                                    "here")
+                        .finish();
+                }
+            }
+            else
+            {
+                result.push_back(create_non_init_declaration(state, decl_type, declarator));
+            }
+        }
+        return result;
+    });
 };
 
 struct global_declaration : lexy::scan_production<clauf::decl_list>

@@ -310,7 +310,16 @@ private:
 
 bool is_lvalue(const expr* e);
 bool is_modifiable_lvalue(const expr* e);
+bool is_static_lvalue(const expr* e);
+
+bool is_named_constant(const expr* e);
+bool is_arithmetic_constant_expr(const expr* e);
+bool is_integer_constant_expr(const expr* e);
 bool is_nullptr_constant(const expr* e);
+bool is_address_constant(const expr* e);
+bool is_address_constant_for_complete_type(const expr* e);
+bool is_address_constant_with_offset(const expr* e);
+bool is_constant_expr(const expr* e);
 
 using expr_list = dryad::unlinked_node_list<expr>;
 
@@ -776,10 +785,11 @@ private:
 class variable_decl : public dryad::basic_node<node_kind::variable_decl, decl>
 {
 public:
-    explicit variable_decl(dryad::node_ctor ctor, ast_symbol name, const clauf::type* type,
-                           clauf::expr* initializer = nullptr)
+    explicit variable_decl(dryad::node_ctor ctor, bool has_static_storage_duration, ast_symbol name,
+                           const clauf::type* type, clauf::expr* initializer = nullptr)
     : node_base(ctor, name, type)
     {
+        set_has_static_storage_duration_impl(has_static_storage_duration);
         if (initializer != nullptr)
             insert_child_after(nullptr, initializer);
     }
@@ -794,6 +804,14 @@ public:
         insert_child_after(nullptr, initializer);
     }
     DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, nullptr)
+
+    bool has_static_storage_duration() const
+    {
+        return has_static_storage_duration_impl();
+    }
+
+private:
+    DRYAD_ATTRIBUTE_USER_DATA16(bool, has_static_storage_duration_impl);
 };
 
 /// A parameter declaration.

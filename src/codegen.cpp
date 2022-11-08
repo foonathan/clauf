@@ -896,7 +896,6 @@ lauf_asm_module* clauf::codegen(const ast& ast)
                 if (decl->has_initializer())
                     CLAUF_TODO("initializers for global variables not yet supported");
 
-                // TODO: types other than int
                 auto global
                     = lauf_asm_add_global_zero_data(ctx.mod, codegen_type(decl->type()).layout);
                 lauf_asm_set_global_debug_name(ctx.mod, global,
