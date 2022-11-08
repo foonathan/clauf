@@ -165,7 +165,8 @@ clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, cl
         return expr;
 
     auto target_type = [&]() -> const clauf::type* {
-        auto kind = dryad::node_cast<clauf::builtin_type>(expr->type())->type_kind();
+        auto kind = dryad::node_cast<clauf::builtin_type>(clauf::unqualified_type_of(expr->type()))
+                        ->type_kind();
         switch (kind)
         {
         case clauf::builtin_type::void_:
@@ -291,6 +292,10 @@ constexpr auto kw_type_qualifiers
           .map(LEXY_LIT("const"), clauf::qualified_type::const_)
           .map(LEXY_LIT("volatile"), clauf::qualified_type::volatile_)
           .map(LEXY_LIT("restrict"), clauf::qualified_type::restrict_);
+constexpr auto kw_storage_class_specifiers
+    = lexy::symbol_table<clauf::storage_class_specifier>.map(LEXY_LIT("constexpr"),
+                                                             clauf::storage_class_specifier::
+                                                                 constexpr_);
 
 constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
@@ -306,7 +311,9 @@ struct identifier
     static constexpr auto rule
         = id.reserve(kw_nullptr, dsl::literal_set(kw_type_ops), kw_return, kw_break, kw_continue,
                      kw_if, kw_else, kw_while, kw_do, dsl::literal_set(kw_type_specifiers),
-                     dsl::literal_set(kw_type_qualifiers), dsl::literal_set(kw_builtin_exprs));
+                     dsl::literal_set(kw_type_qualifiers),
+                     dsl::literal_set(kw_storage_class_specifiers),
+                     dsl::literal_set(kw_builtin_exprs));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
 
@@ -449,25 +456,41 @@ struct argument_list
 
 template <bool Abstract = false>
 struct declarator;
-struct type_specifier_list;
+struct decl_specifier_list;
+
+struct type_with_storage_class
+{
+    clauf::type*                                  type;
+    std::optional<clauf::storage_class_specifier> specifier;
+};
 
 // Parses a type name followed by a closing paren.
 struct type_name_in_parens
 {
     static constexpr auto rule = [] {
-        auto type_specifiers = dsl::recurse_branch<type_specifier_list>;
+        auto type_specifiers = dsl::recurse_branch<decl_specifier_list>;
         auto opt_declarator
             = dsl::parenthesized.close()
               | dsl::else_ >> dsl::recurse<declarator<true>> + dsl::parenthesized.close();
 
-        return type_specifiers >> opt_declarator;
+        return dsl::position(type_specifiers) >> opt_declarator;
     }();
     static constexpr auto value = callback<const clauf::type*>(
-        [](compiler_state& state, const clauf::type* base_type, clauf::declarator* decl = nullptr) {
+        [](compiler_state& state, const char* pos, type_with_storage_class ty_stor,
+           clauf::declarator* decl = nullptr) -> const clauf::type* {
+            if (ty_stor.specifier.has_value())
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "invalid use of storage class specifier in cast/sizeof/alignof")
+                    .annotation(clauf::annotation_kind::primary, pos, "here")
+                    .finish();
+            }
+
             if (decl != nullptr)
-                return clauf::get_type(state.ast.types, decl, base_type);
+                return clauf::get_type(state.ast.types, decl, ty_stor.type);
             else
-                return base_type;
+                return ty_stor.type;
         });
 };
 
@@ -1174,140 +1197,154 @@ namespace clauf::grammar
 {
 struct parameter_list;
 
-struct type_specifier_list
+struct decl_specifier_list
 {
     static constexpr auto rule = dsl::position(
-        dsl::list(dsl::symbol<kw_type_specifiers> | dsl::symbol<kw_type_qualifiers>));
+        dsl::list(dsl::symbol<kw_storage_class_specifiers> | //
+                  dsl::symbol<kw_type_specifiers> | dsl::symbol<kw_type_qualifiers>));
     static constexpr auto value
-        = lexy::as_list<std::vector<std::variant<
-              clauf::type_specifier, clauf::qualified_type::qualifier_t>>> >> callback<clauf::
-                                                                                           type*>(
-              [](compiler_state& state, const char* pos,
-                 auto&& specifiers_qualifiers) -> clauf::type* {
-                  std::optional<clauf::builtin_type::type_kind_t> base_type;
-                  std::optional<bool>                             is_signed;
-                  int                                             short_count = 0;
-                  int qualifiers = clauf::qualified_type::unqualified;
+        = lexy::as_list<
+              std::vector<std::variant<clauf::type_specifier, clauf::qualified_type::qualifier_t,
+                                       clauf::storage_class_specifier>>> //
+          >> callback<type_with_storage_class>([](compiler_state& state, const char* pos,
+                                                  auto&& specifiers_qualifiers) {
+                std::optional<clauf::storage_class_specifier>   storage_class;
+                std::optional<clauf::builtin_type::type_kind_t> base_type;
+                std::optional<bool>                             is_signed;
+                int                                             short_count = 0;
+                int qualifiers = clauf::qualified_type::unqualified;
 
-                  auto log_error = [&] {
-                      state.logger
-                          .log(clauf::diagnostic_kind::error,
-                               "invalid combination of type specifiers or qualifiers")
-                          .annotation(clauf::annotation_kind::primary, pos, "here")
-                          .finish();
-                  };
+                auto log_error = [&] {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error,
+                             "invalid combination of type specifiers or qualifiers")
+                        .annotation(clauf::annotation_kind::primary, pos, "here")
+                        .finish();
+                };
 
-                  for (auto specifier_or_qualifier : specifiers_qualifiers)
-                  {
-                      if (std::holds_alternative<clauf::type_specifier>(specifier_or_qualifier))
-                      {
-                          switch (std::get<clauf::type_specifier>(specifier_or_qualifier))
-                          {
-                          case clauf::type_specifier::void_:
-                              if (base_type.has_value())
-                                  log_error();
-                              base_type = clauf::builtin_type::void_;
-                              break;
-                          case clauf::type_specifier::int_:
-                              if (base_type.has_value())
-                                  log_error();
-                              base_type = clauf::builtin_type::sint64;
-                              break;
-                          case clauf::type_specifier::char_:
-                              if (base_type.has_value())
-                                  log_error();
-                              // TODO: set base type to char, not signed char
-                              base_type = clauf::builtin_type::sint8;
-                              break;
+                for (auto specifier_or_qualifier : specifiers_qualifiers)
+                {
+                    if (std::holds_alternative<clauf::type_specifier>(specifier_or_qualifier))
+                    {
+                        switch (std::get<clauf::type_specifier>(specifier_or_qualifier))
+                        {
+                        case clauf::type_specifier::void_:
+                            if (base_type.has_value())
+                                log_error();
+                            base_type = clauf::builtin_type::void_;
+                            break;
+                        case clauf::type_specifier::int_:
+                            if (base_type.has_value())
+                                log_error();
+                            base_type = clauf::builtin_type::sint64;
+                            break;
+                        case clauf::type_specifier::char_:
+                            if (base_type.has_value())
+                                log_error();
+                            // TODO: set base type to char, not signed char
+                            base_type = clauf::builtin_type::sint8;
+                            break;
 
-                          case clauf::type_specifier::signed_:
-                              if (is_signed.has_value())
-                                  log_error();
-                              is_signed = true;
-                              break;
-                          case clauf::type_specifier::unsigned_:
-                              if (is_signed.has_value())
-                                  log_error();
-                              is_signed = false;
-                              break;
-                          case clauf::type_specifier::short_:
-                              if (short_count == 2)
-                                  log_error();
-                              ++short_count;
-                              break;
-                          }
-                      }
-                      else
-                      {
-                          auto qual = std::get<clauf::qualified_type::qualifier_t>(
-                              specifier_or_qualifier);
-                          if ((qualifiers & qual) != 0)
-                              log_error();
-                          qualifiers |= qual;
-                      }
-                  }
+                        case clauf::type_specifier::signed_:
+                            if (is_signed.has_value())
+                                log_error();
+                            is_signed = true;
+                            break;
+                        case clauf::type_specifier::unsigned_:
+                            if (is_signed.has_value())
+                                log_error();
+                            is_signed = false;
+                            break;
+                        case clauf::type_specifier::short_:
+                            if (short_count == 2)
+                                log_error();
+                            ++short_count;
+                            break;
+                        }
+                    }
+                    else if (std::holds_alternative<clauf::qualified_type::qualifier_t>(
+                                 specifier_or_qualifier))
+                    {
+                        auto qual
+                            = std::get<clauf::qualified_type::qualifier_t>(specifier_or_qualifier);
+                        if ((qualifiers & qual) != 0)
+                            log_error();
+                        qualifiers |= qual;
+                    }
+                    else
+                    {
+                        auto new_storage_class
+                            = std::get<clauf::storage_class_specifier>(specifier_or_qualifier);
+                        if (storage_class.has_value())
+                            log_error();
+                        storage_class = new_storage_class;
+                    }
+                }
 
-                  auto unqualified_ty = [&]() -> clauf::type* {
-                      switch (base_type.value_or(clauf::builtin_type::sint64))
-                      {
-                      case builtin_type::void_:
-                          if (is_signed.has_value())
-                              log_error();
+                auto unqualified_ty = [&]() -> clauf::type* {
+                    switch (base_type.value_or(clauf::builtin_type::sint64))
+                    {
+                    case builtin_type::void_:
+                        if (is_signed.has_value())
+                            log_error();
 
-                          return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                              clauf::builtin_type::void_);
+                        return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                            clauf::builtin_type::void_);
 
-                      case builtin_type::sint8:
-                          if (short_count > 0)
-                              log_error();
+                    case builtin_type::sint8:
+                        if (short_count > 0)
+                            log_error();
 
-                          if (is_signed.value_or(true))
-                              return state.ast.create(clauf::builtin_type::sint8);
-                          else
-                              return state.ast.create(clauf::builtin_type::uint8);
+                        if (is_signed.value_or(true))
+                            return state.ast.create(clauf::builtin_type::sint8);
+                        else
+                            return state.ast.create(clauf::builtin_type::uint8);
 
-                      case builtin_type::sint64:
-                          if (is_signed.value_or(true))
-                          {
-                              if (short_count == 0)
-                                  return state.ast.create(clauf::builtin_type::sint64);
-                              else if (short_count == 1)
-                                  return state.ast.create(clauf::builtin_type::sint32);
-                              else
-                                  return state.ast.create(clauf::builtin_type::sint16);
-                          }
-                          else
-                          {
-                              if (short_count == 0)
-                                  return state.ast.create(clauf::builtin_type::uint64);
-                              else if (short_count == 1)
-                                  return state.ast.create(clauf::builtin_type::uint32);
-                              else
-                                  return state.ast.create(clauf::builtin_type::uint16);
-                          }
+                    case builtin_type::sint64:
+                        if (is_signed.value_or(true))
+                        {
+                            if (short_count == 0)
+                                return state.ast.create(clauf::builtin_type::sint64);
+                            else if (short_count == 1)
+                                return state.ast.create(clauf::builtin_type::sint32);
+                            else
+                                return state.ast.create(clauf::builtin_type::sint16);
+                        }
+                        else
+                        {
+                            if (short_count == 0)
+                                return state.ast.create(clauf::builtin_type::uint64);
+                            else if (short_count == 1)
+                                return state.ast.create(clauf::builtin_type::uint32);
+                            else
+                                return state.ast.create(clauf::builtin_type::uint16);
+                        }
 
-                      default:
-                          CLAUF_UNREACHABLE("not a base type");
-                          return nullptr;
-                      }
-                  }();
+                    default:
+                        CLAUF_UNREACHABLE("not a base type");
+                        return nullptr;
+                    }
+                }();
 
-                  if (qualifiers != clauf::qualified_type::unqualified)
-                  {
-                      if ((qualifiers & clauf::qualified_type::restrict_) != 0
-                          && !clauf::is_pointer(unqualified_ty))
-                          log_error();
-                      return state.ast.types.build([&](type_forest::node_creator creator) {
-                          return creator.create<clauf::qualified_type>(qualifiers,
-                                                                       clone(creator,
-                                                                             unqualified_ty));
-                      });
-                  }
-                  else
-                  {
-                      return unqualified_ty;
-                  }
-              });
+                auto result_ty = [&] {
+                    if (qualifiers != clauf::qualified_type::unqualified)
+                    {
+                        if ((qualifiers & clauf::qualified_type::restrict_) != 0
+                            && !clauf::is_pointer(unqualified_ty))
+                            log_error();
+                        return state.ast.types.build([&](type_forest::node_creator creator) {
+                            return creator.create<clauf::qualified_type>(qualifiers,
+                                                                         clone(creator,
+                                                                               unqualified_ty));
+                        });
+                    }
+                    else
+                    {
+                        return unqualified_ty;
+                    }
+                }();
+                return type_with_storage_class{result_ty, storage_class};
+            });
 };
 
 struct type_qualifier_list
@@ -1375,11 +1412,21 @@ struct declarator : lexy::expression_production
 
 struct parameter_decl
 {
-    static constexpr auto rule  = dsl::p<type_specifier_list> + dsl::p<declarator<true>>;
+    static constexpr auto rule  = dsl::p<decl_specifier_list> + dsl::p<declarator<true>>;
     static constexpr auto value = callback<clauf::parameter_decl*>(
-        [](compiler_state& state, clauf::type* base_type, clauf::declarator* decl) {
+        [](compiler_state& state, type_with_storage_class ty_stor, clauf::declarator* decl) {
             auto name = get_name(decl);
-            auto type = get_type(state.ast.types, decl, base_type);
+            auto type = get_type(state.ast.types, decl, ty_stor.type);
+
+            if (ty_stor.specifier.has_value())
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "invalid use of storage class specifier on parameter declaration")
+                    .annotation(clauf::annotation_kind::primary, name.loc,
+                                "used to declare parameter here")
+                    .finish();
+            }
             if (!clauf::is_complete_object_type(type))
             {
                 state.logger
@@ -1388,6 +1435,7 @@ struct parameter_decl
                                 "used to declare parameter here")
                     .finish();
             }
+
             return state.ast.create<clauf::parameter_decl>(name.loc, name.symbol, type);
         });
 };
@@ -1417,14 +1465,27 @@ struct init_declarator_list
 struct declaration
 {
     static constexpr auto rule
-        = dsl::p<type_specifier_list> >> dsl::p<init_declarator_list> + dsl::semicolon;
+        = dsl::p<decl_specifier_list> >> dsl::p<init_declarator_list> + dsl::semicolon;
 
-    static clauf::decl* create_non_init_declaration(compiler_state& state, clauf::type* decl_type,
+    static clauf::decl* create_non_init_declaration(compiler_state&          state,
+                                                    type_with_storage_class  ty_stor,
                                                     const clauf::declarator* declarator)
     {
-        auto name                        = get_name(declarator);
-        auto type                        = get_type(state.ast.types, declarator, decl_type);
-        auto has_static_storage_duration = state.current_scope == &state.global_scope;
+        auto name = get_name(declarator);
+        auto type = get_type(state.ast.types, declarator, ty_stor.type);
+
+        int var_flags = state.current_scope == &state.global_scope
+                            ? clauf::variable_decl::has_static_storage_duration
+                            : clauf::variable_decl::no_flags;
+        if (ty_stor.specifier == clauf::storage_class_specifier::constexpr_)
+        {
+            var_flags |= clauf::variable_decl::is_constexpr;
+            type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
+                auto unqual_ty = clone(creator, type);
+                return creator.create<clauf::qualified_type>(clauf::qualified_type::const_,
+                                                             unqual_ty);
+            });
+        }
 
         return dryad::visit_node_all(
             declarator,
@@ -1438,12 +1499,12 @@ struct declaration
                         .finish();
                 }
 
-                return state.ast.create<clauf::variable_decl>(name.loc, has_static_storage_duration,
-                                                              name.symbol, type);
+                return state.ast.create<clauf::variable_decl>(name.loc, var_flags, name.symbol,
+                                                              type);
             },
             [&](const clauf::pointer_declarator*) -> clauf::decl* {
-                return state.ast.create<clauf::variable_decl>(name.loc, has_static_storage_duration,
-                                                              name.symbol, type);
+                return state.ast.create<clauf::variable_decl>(name.loc, var_flags, name.symbol,
+                                                              type);
             },
             [&](const clauf::function_declarator* decl) -> clauf::decl* {
                 return state.ast.create<clauf::function_decl>(name.loc, name.symbol, type,
@@ -1451,8 +1512,8 @@ struct declaration
             });
     }
 
-    static constexpr auto value = callback<clauf::decl_list>([](compiler_state& state,
-                                                                clauf::type*    decl_type,
+    static constexpr auto value = callback<clauf::decl_list>([](compiler_state&         state,
+                                                                type_with_storage_class ty_stor,
                                                                 const clauf::declarator_list&
                                                                     declarators) {
         clauf::decl_list result;
@@ -1460,7 +1521,7 @@ struct declaration
         {
             if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
             {
-                auto decl           = create_non_init_declaration(state, decl_type, init->child());
+                auto decl           = create_non_init_declaration(state, ty_stor, init->child());
                 auto var_decl       = dryad::node_cast<clauf::variable_decl>(decl);
                 auto converted_init = do_assignment_conversion(state, state.ast.location_of(decl),
                                                                assignment_op::none, decl->type(),
@@ -1468,7 +1529,8 @@ struct declaration
                 var_decl->set_initializer(converted_init);
                 result.push_back(decl);
 
-                if (var_decl->has_static_storage_duration()
+                if (((var_decl->flags() & clauf::variable_decl::has_static_storage_duration) != 0
+                     || (var_decl->flags() & clauf::variable_decl::is_constexpr) != 0)
                     && !clauf::is_constant_expr(converted_init))
                 {
                     state.logger
@@ -1481,7 +1543,7 @@ struct declaration
             }
             else
             {
-                result.push_back(create_non_init_declaration(state, decl_type, declarator));
+                result.push_back(create_non_init_declaration(state, ty_stor, declarator));
             }
         }
         return result;
@@ -1493,8 +1555,8 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
     template <typename Context, typename Reader>
     static scan_result scan(lexy::rule_scanner<Context, Reader>& scanner, compiler_state& state)
     {
-        auto decl_type = scanner.parse(grammar::type_specifier_list{});
-        if (!decl_type)
+        auto ty_stor = scanner.parse(grammar::decl_specifier_list{});
+        if (!ty_stor)
             return lexy::scan_failed;
 
         auto decl_list = scanner.parse(grammar::init_declarator_list{});
@@ -1535,7 +1597,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             }
 
             auto name = get_name(decl);
-            auto type = get_type(state.ast.types, decl, decl_type.value());
+            auto type = get_type(state.ast.types, decl, ty_stor.value().type);
 
             auto existing_decl = state.current_scope->symbols.lookup(name.symbol);
             auto fn_decl = existing_decl ? dryad::node_try_cast<clauf::function_decl>(existing_decl)
@@ -1573,7 +1635,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             if (!scanner)
                 return lexy::scan_failed;
 
-            auto result = grammar::declaration::value[state](decl_type.value(), decl_list.value());
+            auto result = grammar::declaration::value[state](ty_stor.value(), decl_list.value());
             for (auto decl : result)
                 insert_new_decl(state, decl);
             return result;

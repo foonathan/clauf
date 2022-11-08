@@ -241,7 +241,7 @@ bool clauf::is_static_lvalue(const expr* e)
     if (auto id = dryad::node_try_cast<identifier_expr>(e))
     {
         if (auto var = dryad::node_try_cast<variable_decl>(id->declaration()))
-            return var->has_static_storage_duration();
+            return (var->flags() & variable_decl::has_static_storage_duration) != 0;
         else if (dryad::node_has_kind<function_decl>(id->declaration()))
             return true;
     }
@@ -268,8 +268,16 @@ bool clauf::is_nullptr_constant(const expr* e)
     }
 }
 
-bool clauf::is_named_constant(const expr*)
+bool clauf::is_named_constant(const expr* e)
 {
+    if (auto id = dryad::node_try_cast<identifier_expr>(e))
+    {
+        if (auto var = dryad::node_try_cast<variable_decl>(id->declaration()))
+            return (var->flags() & variable_decl::is_constexpr) != 0;
+        else if (dryad::node_has_kind<function_decl>(id->declaration()))
+            return true;
+    }
+
     return false;
 }
 

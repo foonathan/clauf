@@ -752,6 +752,11 @@ public:
 //=== declaration ===//
 namespace clauf
 {
+enum class storage_class_specifier
+{
+    constexpr_,
+};
+
 /// The baseclass of all declarations in the AST.
 class decl : public dryad::abstract_node_range<dryad::container_node<node>, node_kind::first_decl,
                                                node_kind::last_decl>
@@ -785,11 +790,18 @@ private:
 class variable_decl : public dryad::basic_node<node_kind::variable_decl, decl>
 {
 public:
-    explicit variable_decl(dryad::node_ctor ctor, bool has_static_storage_duration, ast_symbol name,
+    enum flag : std::uint16_t
+    {
+        no_flags,
+        has_static_storage_duration = 1 << 0,
+        is_constexpr                = 1 << 1,
+    };
+
+    explicit variable_decl(dryad::node_ctor ctor, int flags, ast_symbol name,
                            const clauf::type* type, clauf::expr* initializer = nullptr)
     : node_base(ctor, name, type)
     {
-        set_has_static_storage_duration_impl(has_static_storage_duration);
+        set_flags_impl(std::uint16_t(flags));
         if (initializer != nullptr)
             insert_child_after(nullptr, initializer);
     }
@@ -805,13 +817,13 @@ public:
     }
     DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, nullptr)
 
-    bool has_static_storage_duration() const
+    flag flags() const
     {
-        return has_static_storage_duration_impl();
+        return flag(flags_impl());
     }
 
 private:
-    DRYAD_ATTRIBUTE_USER_DATA16(bool, has_static_storage_duration_impl);
+    DRYAD_ATTRIBUTE_USER_DATA16(std::uint16_t, flags_impl);
 };
 
 /// A parameter declaration.
