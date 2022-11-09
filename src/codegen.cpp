@@ -15,8 +15,6 @@
 #include <lauf/lib/memory.h>
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
-#include <lauf/runtime/memory.h>
-#include <lauf/runtime/process.h>
 #include <lauf/runtime/value.h>
 #include <lexy/input_location.hpp>
 #include <vector>
@@ -892,58 +890,40 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 std::vector<unsigned char> clauf::constant_eval(lauf_vm* vm, const expr* e)
 {
     context ctx(nullptr);
-    auto    type = codegen_type(e->type());
 
-    // We create a chunk that will hold the bytecode for our expression.
-    auto chunk = lauf_asm_create_chunk(ctx.mod);
+    auto                       type = codegen_type(e->type());
+    std::vector<unsigned char> result;
+    result.resize(type.layout.size);
+
+    // We create a chunk that will hold the bytecode for our expression,
+    // and a native global where we store the result.
+    auto result_global = lauf_asm_add_global_native_data(ctx.mod);
+    auto chunk         = lauf_asm_create_chunk(ctx.mod);
     {
-        lauf_asm_build_chunk(ctx.builder, ctx.mod, chunk, 1);
+        lauf_asm_build_chunk(ctx.builder, ctx.mod, chunk, 0);
 
-        // Allocate memory to store the expression in.
-        lauf_asm_inst_uint(ctx.builder, type.layout.alignment);
-        lauf_asm_inst_uint(ctx.builder, type.layout.size);
-        lauf_asm_inst_call_builtin(ctx.builder, lauf_lib_heap_alloc);
-        // At this point, the address is on top of the stack.
-
-        // We then push the expression onto the stack.
+        // Store the result of the expression in the global.
         codegen_expr(ctx, e);
-        // Now the stack is: [address, value]
-
-        // Store the expression in the heap memory.
-        lauf_asm_inst_pick(ctx.builder, 1);
+        lauf_asm_inst_global_addr(ctx.builder, result_global);
         lauf_asm_inst_store_field(ctx.builder, type, 0);
-
-        // Don't free heap memory when we return.
-        lauf_asm_inst_pick(ctx.builder, 0);
-        lauf_asm_inst_call_builtin(ctx.builder, lauf_lib_heap_leak);
 
         lauf_asm_inst_return(ctx.builder);
         lauf_asm_build_finish(ctx.builder);
     }
 
-    // We then execute that bytecode.
-    auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
-    auto process = lauf_vm_start_process(vm, &program);
+    // We then execute that chunk.
+    {
+        auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
 
-    lauf_runtime_value output;
-    auto success = lauf_runtime_resume(process, lauf_runtime_get_current_fiber(process), nullptr, 0,
-                                       &output, 1);
-    CLAUF_ASSERT(success, "constant evaluation should not panic");
+        lauf_asm_global_definition result_global_def;
+        lauf_asm_define_global(&result_global_def, &program, result_global, result.data(),
+                               result.size());
 
-    lauf_runtime_allocation alloc;
-    auto valid_alloc = lauf_runtime_get_allocation(process, output.as_address, &alloc);
-    CLAUF_ASSERT(valid_alloc, "we have leaked heap memory which should still be valid");
+        auto success = lauf_vm_execute_oneshot(vm, program, nullptr, nullptr);
+        CLAUF_ASSERT(success, "constant evaluation should not panic");
+    }
 
-    std::vector<unsigned char> result;
-    result.resize(type.layout.size);
-    std::memcpy(result.data(), alloc.ptr, type.layout.size);
-
-    auto allocator = lauf_vm_get_allocator(vm);
-    allocator.free_alloc(allocator.user_data, alloc.ptr, type.layout.size);
-    lauf_runtime_destroy_process(process);
-    lauf_asm_destroy_program(program);
     lauf_asm_destroy_module(ctx.mod);
-
     return result;
 }
 
