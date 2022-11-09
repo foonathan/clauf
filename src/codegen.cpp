@@ -919,7 +919,7 @@ std::vector<unsigned char> clauf::constant_eval(lauf_vm* vm, const expr* e)
         lauf_asm_define_global(&result_global_def, &program, result_global, result.data(),
                                result.size());
 
-        auto success = lauf_vm_execute_oneshot(vm, program, nullptr, nullptr);
+        [[maybe_unused]] auto success = lauf_vm_execute_oneshot(vm, program, nullptr, nullptr);
         CLAUF_ASSERT(success, "constant evaluation should not panic");
     }
 
