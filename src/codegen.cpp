@@ -892,7 +892,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
-        [&](dryad::traverse_event_exit, const clauf::variable_decl* decl) {
+        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::variable_decl* decl) {
             auto type = codegen_type(decl->type());
             if (decl->storage_duration() == clauf::storage_duration::static_)
             {
@@ -905,8 +905,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
                 if (decl->has_initializer())
                 {
-                    // If we have an initializer, it has been visited already and its value pushed
-                    // on top of the stack. Store the initial value in the local variable.
+                    visitor(decl->initializer());
                     lauf_asm_inst_local_addr(b, var);
                     lauf_asm_inst_store_field(b, type, 0);
                 }
