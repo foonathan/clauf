@@ -1500,7 +1500,7 @@ struct parameter_decl
             auto name = get_name(decl);
             auto type = get_type(state.ast.types, decl, ty_spec.type);
 
-            if (ty_spec.is_valid_for_parameter())
+            if (!ty_spec.is_valid_for_parameter())
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error,
