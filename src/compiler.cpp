@@ -9,7 +9,6 @@
 #include <lexy/dsl.hpp>
 #include <optional>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include <clauf/assert.hpp>
@@ -280,22 +279,46 @@ constexpr auto kw_type_ops = lexy::symbol_table<clauf::type_constant_expr::op_t>
                                  .map(LEXY_LIT("sizeof"), clauf::type_constant_expr::sizeof_)
                                  .map(LEXY_LIT("alignof"), clauf::type_constant_expr::alignof_);
 
-constexpr auto kw_type_specifiers = lexy::symbol_table<clauf::type_specifier> //
-                                        .map(LEXY_LIT("void"), clauf::type_specifier::void_)
-                                        .map(LEXY_LIT("int"), clauf::type_specifier::int_)
-                                        .map(LEXY_LIT("char"), clauf::type_specifier::char_)
-                                        .map(LEXY_LIT("signed"), clauf::type_specifier::signed_)
-                                        .map(LEXY_LIT("unsigned"), clauf::type_specifier::unsigned_)
-                                        .map(LEXY_LIT("short"), clauf::type_specifier::short_);
-constexpr auto kw_type_qualifiers
-    = lexy::symbol_table<clauf::qualified_type::qualifier_t> //
-          .map(LEXY_LIT("const"), clauf::qualified_type::const_)
-          .map(LEXY_LIT("volatile"), clauf::qualified_type::volatile_)
-          .map(LEXY_LIT("restrict"), clauf::qualified_type::restrict_);
-constexpr auto kw_storage_class_specifiers
-    = lexy::symbol_table<clauf::storage_class_specifier>.map(LEXY_LIT("constexpr"),
-                                                             clauf::storage_class_specifier::
-                                                                 constexpr_);
+enum class decl_specifier
+{
+    //=== storage class specifiers ===//
+    auto_,
+    constexpr_,
+    extern_,
+    register_,
+    static_,
+
+    //=== type specifiers ===//
+    void_,
+    int_,
+
+    signed_,
+    unsigned_,
+    char_,
+    short_,
+
+    //=== type qualifiers ===//
+    const_,
+    volatile_,
+    restrict_,
+};
+
+constexpr auto kw_type_qualifiers = lexy::symbol_table<decl_specifier> //
+                                        .map(LEXY_LIT("const"), decl_specifier::const_)
+                                        .map(LEXY_LIT("volatile"), decl_specifier::volatile_)
+                                        .map(LEXY_LIT("restrict"), decl_specifier::restrict_);
+constexpr auto kw_decl_specifiers = kw_type_qualifiers //
+                                        .map(LEXY_LIT("auto"), decl_specifier::auto_)
+                                        .map(LEXY_LIT("constexpr"), decl_specifier::constexpr_)
+                                        .map(LEXY_LIT("extern"), decl_specifier::extern_)
+                                        .map(LEXY_LIT("register"), decl_specifier::register_)
+                                        .map(LEXY_LIT("static"), decl_specifier::static_)
+                                        .map(LEXY_LIT("void"), decl_specifier::void_)
+                                        .map(LEXY_LIT("int"), decl_specifier::int_)
+                                        .map(LEXY_LIT("char"), decl_specifier::char_)
+                                        .map(LEXY_LIT("signed"), decl_specifier::signed_)
+                                        .map(LEXY_LIT("unsigned"), decl_specifier::unsigned_)
+                                        .map(LEXY_LIT("short"), decl_specifier::short_);
 
 constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
@@ -310,10 +333,8 @@ struct identifier
 
     static constexpr auto rule
         = id.reserve(kw_nullptr, dsl::literal_set(kw_type_ops), kw_return, kw_break, kw_continue,
-                     kw_if, kw_else, kw_while, kw_do, dsl::literal_set(kw_type_specifiers),
-                     dsl::literal_set(kw_type_qualifiers),
-                     dsl::literal_set(kw_storage_class_specifiers),
-                     dsl::literal_set(kw_builtin_exprs));
+                     kw_if, kw_else, kw_while, kw_do, dsl::literal_set(kw_decl_specifiers),
+                     dsl::literal_set(kw_type_qualifiers), dsl::literal_set(kw_builtin_exprs));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
 
@@ -458,10 +479,26 @@ template <bool Abstract = false>
 struct declarator;
 struct decl_specifier_list;
 
-struct type_with_storage_class
+struct type_with_specs
 {
-    clauf::type*                                  type;
-    std::optional<clauf::storage_class_specifier> specifier;
+    clauf::type*                           type;
+    std::optional<clauf::linkage>          linkage;
+    std::optional<clauf::storage_duration> storage_duration;
+    bool                                   is_constexpr;
+
+    bool is_valid_for_parameter() const
+    {
+        return !linkage && !storage_duration && !is_constexpr;
+    }
+    bool is_valid_cast() const
+    {
+        return !linkage && !storage_duration && !is_constexpr;
+    }
+
+    bool is_valid_for_function() const
+    {
+        return linkage != clauf::linkage::none && !storage_duration && !is_constexpr;
+    }
 };
 
 // Parses a type name followed by a closing paren.
@@ -476,9 +513,9 @@ struct type_name_in_parens
         return dsl::position(type_specifiers) >> opt_declarator;
     }();
     static constexpr auto value = callback<const clauf::type*>(
-        [](compiler_state& state, const char* pos, type_with_storage_class ty_stor,
+        [](compiler_state& state, const char* pos, type_with_specs ty_stor,
            clauf::declarator* decl = nullptr) -> const clauf::type* {
-            if (ty_stor.specifier.has_value())
+            if (!ty_stor.is_valid_cast())
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error,
@@ -1199,16 +1236,15 @@ struct parameter_list;
 
 struct decl_specifier_list
 {
-    static constexpr auto rule = dsl::position(
-        dsl::list(dsl::symbol<kw_storage_class_specifiers> | //
-                  dsl::symbol<kw_type_specifiers> | dsl::symbol<kw_type_qualifiers>));
+    static constexpr auto rule = dsl::position(dsl::list(dsl::symbol<kw_decl_specifiers>));
     static constexpr auto value
-        = lexy::as_list<
-              std::vector<std::variant<clauf::type_specifier, clauf::qualified_type::qualifier_t,
-                                       clauf::storage_class_specifier>>> //
-          >> callback<type_with_storage_class>([](compiler_state& state, const char* pos,
-                                                  auto&& specifiers_qualifiers) {
-                std::optional<clauf::storage_class_specifier>   storage_class;
+        = lexy::as_list<std::vector<decl_specifier>> //
+          >> callback<type_with_specs>([](compiler_state& state, const char* pos,
+                                          auto&& specifiers) {
+                std::optional<clauf::linkage>          linkage;
+                std::optional<clauf::storage_duration> storage_duration;
+                bool                                   is_constexpr;
+
                 std::optional<clauf::builtin_type::type_kind_t> base_type;
                 std::optional<bool>                             is_signed;
                 int                                             short_count = 0;
@@ -1217,67 +1253,99 @@ struct decl_specifier_list
                 auto log_error = [&] {
                     state.logger
                         .log(clauf::diagnostic_kind::error,
-                             "invalid combination of type specifiers or qualifiers")
+                             "invalid combination of declaration specifiers")
                         .annotation(clauf::annotation_kind::primary, pos, "here")
                         .finish();
                 };
 
-                for (auto specifier_or_qualifier : specifiers_qualifiers)
+                for (auto specifier : specifiers)
                 {
-                    if (std::holds_alternative<clauf::type_specifier>(specifier_or_qualifier))
+                    switch (specifier)
                     {
-                        switch (std::get<clauf::type_specifier>(specifier_or_qualifier))
-                        {
-                        case clauf::type_specifier::void_:
-                            if (base_type.has_value())
-                                log_error();
-                            base_type = clauf::builtin_type::void_;
-                            break;
-                        case clauf::type_specifier::int_:
-                            if (base_type.has_value())
-                                log_error();
-                            base_type = clauf::builtin_type::sint64;
-                            break;
-                        case clauf::type_specifier::char_:
-                            if (base_type.has_value())
-                                log_error();
-                            // TODO: set base type to char, not signed char
-                            base_type = clauf::builtin_type::sint8;
-                            break;
+                    case decl_specifier::auto_:
+                        if (storage_duration.has_value())
+                            log_error();
+                        storage_duration = clauf::storage_duration::automatic;
+                        break;
+                    case decl_specifier::constexpr_:
+                        if ((linkage.has_value() && linkage.value() != clauf::linkage::internal)
+                            || is_constexpr)
+                            log_error();
+                        is_constexpr = true;
+                        if (state.current_scope == &state.global_scope)
+                            linkage = clauf::linkage::internal;
+                        break;
+                    case decl_specifier::extern_:
+                        if (linkage.has_value())
+                            log_error();
+                        linkage = clauf::linkage::external;
+                        break;
+                    case decl_specifier::register_:
+                        if (storage_duration.has_value())
+                            log_error();
+                        storage_duration = clauf::storage_duration::register_;
+                        break;
+                    case decl_specifier::static_:
+                        if ((linkage.has_value() && linkage.value() != clauf::linkage::internal)
+                            || storage_duration.has_value())
+                            log_error();
+                        linkage          = clauf::linkage::internal;
+                        storage_duration = clauf::storage_duration::static_;
+                        break;
 
-                        case clauf::type_specifier::signed_:
-                            if (is_signed.has_value())
-                                log_error();
-                            is_signed = true;
-                            break;
-                        case clauf::type_specifier::unsigned_:
-                            if (is_signed.has_value())
-                                log_error();
-                            is_signed = false;
-                            break;
-                        case clauf::type_specifier::short_:
-                            if (short_count == 2)
-                                log_error();
-                            ++short_count;
-                            break;
-                        }
-                    }
-                    else if (std::holds_alternative<clauf::qualified_type::qualifier_t>(
-                                 specifier_or_qualifier))
-                    {
-                        auto qual
-                            = std::get<clauf::qualified_type::qualifier_t>(specifier_or_qualifier);
+                    case decl_specifier::void_:
+                        if (base_type.has_value())
+                            log_error();
+                        base_type = clauf::builtin_type::void_;
+                        break;
+                    case decl_specifier::int_:
+                        if (base_type.has_value())
+                            log_error();
+                        base_type = clauf::builtin_type::sint64;
+                        break;
+                    case decl_specifier::char_:
+                        if (base_type.has_value())
+                            log_error();
+                        // TODO: set base type to char, not signed char
+                        base_type = clauf::builtin_type::sint8;
+                        break;
+                    case decl_specifier::signed_:
+                        if (is_signed.has_value())
+                            log_error();
+                        is_signed = true;
+                        break;
+                    case decl_specifier::unsigned_:
+                        if (is_signed.has_value())
+                            log_error();
+                        is_signed = false;
+                        break;
+                    case decl_specifier::short_:
+                        if (short_count == 2)
+                            log_error();
+                        ++short_count;
+                        break;
+
+                    case decl_specifier::const_: {
+                        auto qual = clauf::qualified_type::const_;
                         if ((qualifiers & qual) != 0)
                             log_error();
                         qualifiers |= qual;
+                        break;
                     }
-                    else
-                    {
-                        auto new_storage_class
-                            = std::get<clauf::storage_class_specifier>(specifier_or_qualifier);
-                        if (storage_class.has_value())
+                    case decl_specifier::volatile_: {
+                        auto qual = clauf::qualified_type::volatile_;
+                        if ((qualifiers & qual) != 0)
                             log_error();
-                        storage_class = new_storage_class;
+                        qualifiers |= qual;
+                        break;
+                    }
+                    case decl_specifier::restrict_: {
+                        auto qual = clauf::qualified_type::restrict_;
+                        if ((qualifiers & qual) != 0)
+                            log_error();
+                        qualifiers |= qual;
+                        break;
+                    }
                     }
                 }
 
@@ -1343,18 +1411,14 @@ struct decl_specifier_list
                         return unqualified_ty;
                     }
                 }();
-                return type_with_storage_class{result_ty, storage_class};
+                return type_with_specs{result_ty, linkage, storage_duration, is_constexpr};
             });
 };
 
 struct type_qualifier_list
 {
     static constexpr auto rule  = dsl::list(dsl::symbol<kw_type_qualifiers>);
-    static constexpr auto value = lexy::fold<
-        clauf::qualified_type::qualifier_t>(clauf::qualified_type::unqualified, [](auto lhs,
-                                                                                   auto rhs) {
-        return clauf::qualified_type::qualifier_t(lhs | rhs);
-    });
+    static constexpr auto value = lexy::as_list<std::vector<decl_specifier>>;
 };
 
 template <bool Abstract>
@@ -1402,11 +1466,29 @@ struct declarator : lexy::expression_production
             return state.decl_tree.create<clauf::function_declarator>(child, params);
         },
         [](compiler_state&                                   state, pointer_declarator,
-           std::optional<clauf::qualified_type::qualifier_t> quals, clauf::declarator* child) {
+           const std::optional<std::vector<decl_specifier>>& quals, clauf::declarator* child) {
+            int qual = clauf::qualified_type::unqualified;
+            if (quals)
+                for (auto q : quals.value())
+                    switch (q)
+                    {
+                    case decl_specifier::const_:
+                        qual |= clauf::qualified_type::const_;
+                        break;
+                    case decl_specifier::volatile_:
+                        qual |= clauf::qualified_type::volatile_;
+                        break;
+                    case decl_specifier::restrict_:
+                        qual |= clauf::qualified_type::restrict_;
+                        break;
+
+                    default:
+                        CLAUF_UNREACHABLE("not parsed");
+                        break;
+                    }
+
             return state.decl_tree
-                .create<clauf::pointer_declarator>(quals.value_or(
-                                                       clauf::qualified_type::unqualified),
-                                                   child);
+                .create<clauf::pointer_declarator>(clauf::qualified_type::qualifier_t(qual), child);
         });
 };
 
@@ -1414,11 +1496,11 @@ struct parameter_decl
 {
     static constexpr auto rule  = dsl::p<decl_specifier_list> + dsl::p<declarator<true>>;
     static constexpr auto value = callback<clauf::parameter_decl*>(
-        [](compiler_state& state, type_with_storage_class ty_stor, clauf::declarator* decl) {
+        [](compiler_state& state, type_with_specs ty_spec, clauf::declarator* decl) {
             auto name = get_name(decl);
-            auto type = get_type(state.ast.types, decl, ty_stor.type);
+            auto type = get_type(state.ast.types, decl, ty_spec.type);
 
-            if (ty_stor.specifier.has_value())
+            if (ty_spec.is_valid_for_parameter())
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error,
@@ -1467,19 +1549,20 @@ struct declaration
     static constexpr auto rule
         = dsl::p<decl_specifier_list> >> dsl::p<init_declarator_list> + dsl::semicolon;
 
-    static clauf::decl* create_non_init_declaration(compiler_state&          state,
-                                                    type_with_storage_class  ty_stor,
+    static clauf::decl* create_non_init_declaration(compiler_state& state, type_with_specs ty_spec,
                                                     const clauf::declarator* declarator)
     {
         auto name = get_name(declarator);
-        auto type = get_type(state.ast.types, declarator, ty_stor.type);
+        auto type = get_type(state.ast.types, declarator, ty_spec.type);
 
-        int var_flags = state.current_scope == &state.global_scope
-                            ? clauf::variable_decl::has_static_storage_duration
-                            : clauf::variable_decl::no_flags;
-        if (ty_stor.specifier == clauf::storage_class_specifier::constexpr_)
+        auto default_linkage = state.current_scope == &state.global_scope ? clauf::linkage::external
+                                                                          : clauf::linkage::none;
+        auto default_storage = state.current_scope == &state.global_scope
+                                   ? clauf::storage_duration::static_
+                                   : clauf::storage_duration::automatic;
+
+        if (ty_spec.is_constexpr)
         {
-            var_flags |= clauf::variable_decl::is_constexpr;
             type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
                 auto unqual_ty = clone(creator, type);
                 return creator.create<clauf::qualified_type>(clauf::qualified_type::const_,
@@ -1487,6 +1570,25 @@ struct declaration
             });
         }
 
+        auto create_var = [&] {
+            if (ty_spec.storage_duration == clauf::storage_duration::register_
+                && ty_spec.linkage.value_or(default_linkage) != clauf::linkage::none)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "invalid combination of linkage and register storage class")
+                    .annotation(clauf::annotation_kind::primary, name.loc,
+                                "used to declare variable here")
+                    .finish();
+            }
+
+            return state.ast.create<clauf::variable_decl>(name.loc,
+                                                          ty_spec.linkage.value_or(default_linkage),
+                                                          name.symbol,
+                                                          ty_spec.storage_duration.value_or(
+                                                              default_storage),
+                                                          ty_spec.is_constexpr, type);
+        };
         return dryad::visit_node_all(
             declarator,
             [&](const clauf::name_declarator*) -> clauf::decl* {
@@ -1498,22 +1600,29 @@ struct declaration
                                     "used to declare variable here")
                         .finish();
                 }
-
-                return state.ast.create<clauf::variable_decl>(name.loc, var_flags, name.symbol,
-                                                              type);
+                return create_var();
             },
-            [&](const clauf::pointer_declarator*) -> clauf::decl* {
-                return state.ast.create<clauf::variable_decl>(name.loc, var_flags, name.symbol,
-                                                              type);
-            },
+            [&](const clauf::pointer_declarator*) -> clauf::decl* { return create_var(); },
             [&](const clauf::function_declarator* decl) -> clauf::decl* {
-                return state.ast.create<clauf::function_decl>(name.loc, name.symbol, type,
+                if (!ty_spec.is_valid_for_function())
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error,
+                             "invalid declaration specifier for function")
+                        .annotation(clauf::annotation_kind::primary, name.loc, "here")
+                        .finish();
+                }
+
+                return state.ast.create<clauf::function_decl>(name.loc,
+                                                              ty_spec.linkage.value_or(
+                                                                  default_linkage),
+                                                              name.symbol, type,
                                                               decl->parameters());
             });
     }
 
-    static constexpr auto value = callback<clauf::decl_list>([](compiler_state&         state,
-                                                                type_with_storage_class ty_stor,
+    static constexpr auto value = callback<clauf::decl_list>([](compiler_state& state,
+                                                                type_with_specs ty_stor,
                                                                 const clauf::declarator_list&
                                                                     declarators) {
         clauf::decl_list result;
@@ -1529,9 +1638,7 @@ struct declaration
                 var_decl->set_initializer(converted_init);
                 result.push_back(decl);
 
-                if (((var_decl->flags() & clauf::variable_decl::has_static_storage_duration) != 0
-                     || (var_decl->flags() & clauf::variable_decl::is_constexpr) != 0)
-                    && !clauf::is_constant_expr(converted_init))
+                if (var_decl->is_constexpr() && !clauf::is_constant_expr(converted_init))
                 {
                     state.logger
                         .log(clauf::diagnostic_kind::error,
@@ -1555,8 +1662,8 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
     template <typename Context, typename Reader>
     static scan_result scan(lexy::rule_scanner<Context, Reader>& scanner, compiler_state& state)
     {
-        auto ty_stor = scanner.parse(grammar::decl_specifier_list{});
-        if (!ty_stor)
+        auto ty_spec = scanner.parse(grammar::decl_specifier_list{});
+        if (!ty_spec)
             return lexy::scan_failed;
 
         auto decl_list = scanner.parse(grammar::init_declarator_list{});
@@ -1597,7 +1704,15 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             }
 
             auto name = get_name(decl);
-            auto type = get_type(state.ast.types, decl, ty_stor.value().type);
+            auto type = get_type(state.ast.types, decl, ty_spec.value().type);
+            if (!ty_spec.value().is_valid_for_function())
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "invalid declaration specifier for function")
+                    .annotation(clauf::annotation_kind::primary, name.loc, "here")
+                    .finish();
+            }
 
             auto existing_decl = state.current_scope->symbols.lookup(name.symbol);
             auto fn_decl = existing_decl ? dryad::node_try_cast<clauf::function_decl>(existing_decl)
@@ -1608,8 +1723,11 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             }
             else
             {
-                fn_decl = state.ast.create<clauf::function_decl>(name.loc, name.symbol, type,
-                                                                 decl->parameters());
+                fn_decl
+                    = state.ast.create<clauf::function_decl>(name.loc,
+                                                             ty_spec.value().linkage.value_or(
+                                                                 clauf::linkage::external),
+                                                             name.symbol, type, decl->parameters());
                 insert_new_decl(state, fn_decl);
             }
 
@@ -1635,7 +1753,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             if (!scanner)
                 return lexy::scan_failed;
 
-            auto result = grammar::declaration::value[state](ty_stor.value(), decl_list.value());
+            auto result = grammar::declaration::value[state](ty_spec.value(), decl_list.value());
             for (auto decl : result)
                 insert_new_decl(state, decl);
             return result;

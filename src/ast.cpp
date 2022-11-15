@@ -241,7 +241,7 @@ bool clauf::is_static_lvalue(const expr* e)
     if (auto id = dryad::node_try_cast<identifier_expr>(e))
     {
         if (auto var = dryad::node_try_cast<variable_decl>(id->declaration()))
-            return (var->flags() & variable_decl::has_static_storage_duration) != 0;
+            return var->storage_duration() == clauf::storage_duration::static_;
         else if (dryad::node_has_kind<function_decl>(id->declaration()))
             return true;
     }
@@ -273,7 +273,7 @@ bool clauf::is_named_constant(const expr* e)
     if (auto id = dryad::node_try_cast<identifier_expr>(e))
     {
         if (auto var = dryad::node_try_cast<variable_decl>(id->declaration()))
-            return (var->flags() & variable_decl::is_constexpr) != 0;
+            return var->is_constexpr();
         else if (dryad::node_has_kind<function_decl>(id->declaration()))
             return true;
     }
@@ -802,8 +802,37 @@ void clauf::dump_ast(const ast& ast)
             },
             //=== decls ===//
             [&](const decl* d) {
+                switch (d->linkage())
+                {
+                case linkage::none:
+                    break;
+                case linkage::external:
+                    std::printf("external ");
+                    break;
+                case linkage::internal:
+                    std::printf("internal ");
+                    break;
+                }
                 std::printf("'%s' : ", d->name().c_str(ast.symbols));
                 dump_type(d->type());
+
+                if (auto var = dryad::node_try_cast<variable_decl>(d))
+                {
+                    switch (var->storage_duration())
+                    {
+                    case storage_duration::static_:
+                        std::printf(" [static]");
+                        break;
+                    case storage_duration::automatic:
+                        break;
+                    case storage_duration::register_:
+                        std::printf(" [register]");
+                        break;
+                    }
+
+                    if (var->is_constexpr())
+                        std::printf(" [constexpr]");
+                }
             });
 
         std::putchar('\n');

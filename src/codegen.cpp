@@ -732,6 +732,8 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
                                       {static_cast<std::uint8_t>(parameter_count),
                                        static_cast<std::uint8_t>(return_count)});
     ctx.functions.insert(decl, fn);
+    if (decl->linkage() == clauf::linkage::external)
+        lauf_asm_export_function(fn);
 
     ctx.local_vars = {};
 

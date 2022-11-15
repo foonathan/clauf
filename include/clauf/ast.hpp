@@ -29,17 +29,6 @@ enum class type_node_kind
 using type      = dryad::node<type_node_kind>;
 using type_list = dryad::unlinked_node_list<type>;
 
-enum class type_specifier
-{
-    void_,
-    int_,
-
-    signed_,
-    unsigned_,
-    char_,
-    short_,
-};
-
 /// A builtin type like int.
 class builtin_type : public dryad::basic_node<type_node_kind::builtin_type, type>
 {
@@ -752,9 +741,11 @@ public:
 //=== declaration ===//
 namespace clauf
 {
-enum class storage_class_specifier
+enum class linkage : std::uint16_t
 {
-    constexpr_,
+    none,
+    external,
+    internal,
 };
 
 /// The baseclass of all declarations in the AST.
@@ -766,42 +757,48 @@ public:
     {
         return _name;
     }
-    void set_name(ast_symbol name)
-    {
-        _name = name;
-    }
 
     const clauf::type* type() const
     {
         return _type;
     }
 
+    clauf::linkage linkage() const
+    {
+        return linkage_impl();
+    }
+
 protected:
     explicit decl(dryad::node_ctor ctor, node_kind kind, ast_symbol name, const clauf::type* type)
     : node_base(ctor, kind), _name(name), _type(type)
-    {}
+    {
+        set_linkage_impl(clauf::linkage::none);
+    }
+
+    DRYAD_ATTRIBUTE_USER_DATA16(clauf::linkage, linkage_impl);
 
 private:
     ast_symbol         _name;
     const clauf::type* _type;
 };
 
+enum class storage_duration : std::uint8_t
+{
+    static_,
+    automatic,
+    register_,
+};
+
 /// A variable declaration.
 class variable_decl : public dryad::basic_node<node_kind::variable_decl, decl>
 {
 public:
-    enum flag : std::uint16_t
+    explicit variable_decl(dryad::node_ctor ctor, clauf::linkage linkage, ast_symbol name,
+                           storage_duration sd, bool is_constexpr, const clauf::type* type,
+                           clauf::expr* initializer = nullptr)
+    : node_base(ctor, name, type), _sd(sd), _constexpr(is_constexpr)
     {
-        no_flags,
-        has_static_storage_duration = 1 << 0,
-        is_constexpr                = 1 << 1,
-    };
-
-    explicit variable_decl(dryad::node_ctor ctor, int flags, ast_symbol name,
-                           const clauf::type* type, clauf::expr* initializer = nullptr)
-    : node_base(ctor, name, type)
-    {
-        set_flags_impl(std::uint16_t(flags));
+        set_linkage_impl(linkage);
         if (initializer != nullptr)
             insert_child_after(nullptr, initializer);
     }
@@ -817,13 +814,18 @@ public:
     }
     DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, nullptr)
 
-    flag flags() const
+    bool is_constexpr() const
     {
-        return flag(flags_impl());
+        return _constexpr;
+    }
+    clauf::storage_duration storage_duration() const
+    {
+        return _sd;
     }
 
 private:
-    DRYAD_ATTRIBUTE_USER_DATA16(std::uint16_t, flags_impl);
+    clauf::storage_duration _sd;
+    bool                    _constexpr;
 };
 
 /// A parameter declaration.
@@ -841,10 +843,11 @@ using parameter_list = dryad::unlinked_node_list<parameter_decl>;
 class function_decl : public dryad::basic_node<node_kind::function_decl, decl>
 {
 public:
-    explicit function_decl(dryad::node_ctor ctor, ast_symbol name, const clauf::type* type,
-                           parameter_list params)
+    explicit function_decl(dryad::node_ctor ctor, clauf::linkage linkage, ast_symbol name,
+                           const clauf::type* type, parameter_list params)
     : node_base(ctor, name, type)
     {
+        set_linkage_impl(linkage);
         insert_child_list_after(nullptr, params);
         if (params.empty())
             _last_param = nullptr;
