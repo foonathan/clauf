@@ -718,6 +718,32 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
         });
 }
 
+std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e);
+
+lauf_asm_global* codegen_global(context& ctx, const clauf::variable_decl* decl)
+{
+    auto layout = codegen_type(decl->type()).layout;
+    auto global = [&] {
+        auto qualifiers = clauf::type_qualifiers_of(decl->type());
+        auto is_const   = (qualifiers & clauf::qualified_type::const_) != 0;
+
+        if (decl->has_initializer())
+        {
+            auto init = constant_eval(ctx, decl->initializer());
+            return is_const ? lauf_asm_add_global_const_data(ctx.mod, init.data(), layout)
+                            : lauf_asm_add_global_mut_data(ctx.mod, init.data(), layout);
+        }
+        else
+        {
+            return lauf_asm_add_global_zero_data(ctx.mod, layout);
+        }
+    }();
+
+    lauf_asm_set_global_debug_name(ctx.mod, global, decl->name().c_str(ctx.ast->symbols));
+    ctx.globals.insert(decl, global);
+    return global;
+}
+
 lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* decl)
 {
     std::vector<const clauf::parameter_decl*> params;
@@ -745,9 +771,11 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
     // we need to iterate in reverse order.
     for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
     {
-        auto type = codegen_type((*iter)->type());
-        auto var  = lauf_asm_build_local(b, type.layout);
-        ctx.local_vars.insert(*iter, var);
+        auto param_decl = *iter;
+        auto type       = codegen_type(param_decl->type());
+
+        auto var = lauf_asm_build_local(b, type.layout);
+        ctx.local_vars.insert(param_decl, var);
 
         lauf_asm_inst_local_addr(b, var);
         lauf_asm_inst_store_field(b, type, 0);
@@ -866,15 +894,22 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         dryad::ignore_node<clauf::function_decl>,
         [&](dryad::traverse_event_exit, const clauf::variable_decl* decl) {
             auto type = codegen_type(decl->type());
-            auto var  = lauf_asm_build_local(b, type.layout);
-            ctx.local_vars.insert(decl, var);
-
-            if (decl->has_initializer())
+            if (decl->storage_duration() == clauf::storage_duration::static_)
             {
-                // If we have an initializer, it has been visited already and its value pushed on
-                // top of the stack. Store the initial value in the local variable.
-                lauf_asm_inst_local_addr(b, var);
-                lauf_asm_inst_store_field(b, type, 0);
+                codegen_global(ctx, decl);
+            }
+            else
+            {
+                auto var = lauf_asm_build_local(b, type.layout);
+                ctx.local_vars.insert(decl, var);
+
+                if (decl->has_initializer())
+                {
+                    // If we have an initializer, it has been visited already and its value pushed
+                    // on top of the stack. Store the initial value in the local variable.
+                    lauf_asm_inst_local_addr(b, var);
+                    lauf_asm_inst_store_field(b, type, 0);
+                }
             }
         },
         //=== expression ===//
@@ -905,6 +940,8 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
 
     auto chunk = lauf_asm_create_chunk(ctx.mod);
     {
+        auto old_builder = ctx.builder;
+        ctx.builder      = lauf_asm_create_builder(lauf_asm_default_build_options);
         lauf_asm_build_chunk(ctx.builder, ctx.mod, chunk, 0);
 
         // Store the result of the expression in the global.
@@ -914,6 +951,8 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
 
         lauf_asm_inst_return(ctx.builder);
         lauf_asm_build_finish(ctx.builder);
+        lauf_asm_destroy_builder(ctx.builder);
+        ctx.builder = old_builder;
     }
 
     // We then execute that chunk.
@@ -939,29 +978,7 @@ lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
     for (auto decl : ast.root()->declarations())
         dryad::visit_node(
             decl, [&](const function_decl* decl) { codegen_function(ctx, decl); },
-            [&](const variable_decl* decl) {
-                auto layout = codegen_type(decl->type()).layout;
-                auto global = [&] {
-                    auto qualifiers = clauf::type_qualifiers_of(decl->type());
-                    auto is_const   = (qualifiers & clauf::qualified_type::const_) != 0;
-
-                    if (decl->has_initializer())
-                    {
-                        auto init = constant_eval(ctx, decl->initializer());
-                        return is_const
-                                   ? lauf_asm_add_global_const_data(ctx.mod, init.data(), layout)
-                                   : lauf_asm_add_global_mut_data(ctx.mod, init.data(), layout);
-                    }
-                    else
-                    {
-                        return lauf_asm_add_global_zero_data(ctx.mod, layout);
-                    }
-                }();
-
-                lauf_asm_set_global_debug_name(ctx.mod, global,
-                                               decl->name().c_str(ctx.ast->symbols));
-                ctx.globals.insert(decl, global);
-            });
+            [&](const variable_decl* decl) { codegen_global(ctx, decl); });
 
     return ctx.mod;
 }
