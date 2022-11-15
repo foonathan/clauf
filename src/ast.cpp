@@ -222,8 +222,13 @@ unsigned clauf::integer_rank_of(const type* ty)
 
 bool clauf::is_lvalue(const expr* e)
 {
-    if (dryad::node_has_kind<clauf::identifier_expr>(e))
+    if (auto id = dryad::node_try_cast<clauf::identifier_expr>(e))
+    {
+        if (auto var = dryad::node_try_cast<clauf::variable_decl>(id->declaration()))
+            return var->storage_duration() != clauf::storage_duration::register_;
+
         return true;
+    }
     else if (auto unary = dryad::node_try_cast<clauf::unary_expr>(e))
         return unary->op() == clauf::unary_op::deref;
     else
