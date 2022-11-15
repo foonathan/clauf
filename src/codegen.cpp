@@ -28,18 +28,18 @@ namespace
 struct context
 {
     const clauf::ast*                                               ast;
+    lauf_vm*                                                        vm;
     lauf_asm_module*                                                mod;
     lauf_asm_builder*                                               builder;
     dryad::node_map<const clauf::variable_decl, lauf_asm_global*>   globals;
     dryad::node_map<const clauf::decl, lauf_asm_local*>             local_vars;
     dryad::node_map<const clauf::function_decl, lauf_asm_function*> functions;
 
-    context(const clauf::ast* ast)
-    : ast(ast), mod(lauf_asm_create_module("main module")),
+    context(const clauf::ast& ast, lauf_vm* vm)
+    : ast(&ast), vm(vm), mod(lauf_asm_create_module("main module")),
       builder(lauf_asm_create_builder(lauf_asm_default_build_options))
     {
-        if (ast != nullptr)
-            lauf_asm_set_module_debug_path(mod, ast->input.path);
+        lauf_asm_set_module_debug_path(mod, ast.input.path);
     }
 
     context(const context&)            = delete;
@@ -885,12 +885,9 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
     lauf_asm_build_finish(b);
     return fn;
 }
-} // namespace
 
-std::vector<unsigned char> clauf::constant_eval(lauf_vm* vm, const expr* e)
+std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
 {
-    context ctx(nullptr);
-
     auto                       type = codegen_type(e->type());
     std::vector<unsigned char> result;
     result.resize(type.layout.size);
@@ -898,7 +895,9 @@ std::vector<unsigned char> clauf::constant_eval(lauf_vm* vm, const expr* e)
     // We create a chunk that will hold the bytecode for our expression,
     // and a native global where we store the result.
     auto result_global = lauf_asm_add_global_native_data(ctx.mod);
-    auto chunk         = lauf_asm_create_chunk(ctx.mod);
+    lauf_asm_set_global_debug_name(ctx.mod, result_global, "constexpr_initialization_result");
+
+    auto chunk = lauf_asm_create_chunk(ctx.mod);
     {
         lauf_asm_build_chunk(ctx.builder, ctx.mod, chunk, 0);
 
@@ -919,17 +918,17 @@ std::vector<unsigned char> clauf::constant_eval(lauf_vm* vm, const expr* e)
         lauf_asm_define_global(&result_global_def, &program, result_global, result.data(),
                                result.size());
 
-        [[maybe_unused]] auto success = lauf_vm_execute_oneshot(vm, program, nullptr, nullptr);
+        [[maybe_unused]] auto success = lauf_vm_execute_oneshot(ctx.vm, program, nullptr, nullptr);
         CLAUF_ASSERT(success, "constant evaluation should not panic");
     }
 
-    lauf_asm_destroy_module(ctx.mod);
     return result;
 }
+} // namespace
 
 lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
 {
-    context ctx(&ast);
+    context ctx(ast, vm);
 
     for (auto decl : ast.root()->declarations())
         dryad::visit_node(
@@ -942,7 +941,7 @@ lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
 
                     if (decl->has_initializer())
                     {
-                        auto init = constant_eval(vm, decl->initializer());
+                        auto init = constant_eval(ctx, decl->initializer());
                         return is_const
                                    ? lauf_asm_add_global_const_data(ctx.mod, init.data(), layout)
                                    : lauf_asm_add_global_mut_data(ctx.mod, init.data(), layout);
