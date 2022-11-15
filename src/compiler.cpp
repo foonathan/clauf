@@ -1243,7 +1243,7 @@ struct decl_specifier_list
                                           auto&& specifiers) {
                 std::optional<clauf::linkage>          linkage;
                 std::optional<clauf::storage_duration> storage_duration;
-                bool                                   is_constexpr;
+                bool                                   is_constexpr = false;
 
                 std::optional<clauf::builtin_type::type_kind_t> base_type;
                 std::optional<bool>                             is_signed;
