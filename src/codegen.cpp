@@ -128,6 +128,8 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
 
             // Offset the pointer.
             lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_add);
+
+            CLAUF_TODO("ensure that the address is not invalid now");
         }
         else
             CLAUF_UNREACHABLE("invalid type");
@@ -148,6 +150,8 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
 
             // Offset the pointer.
             lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_sub);
+
+            CLAUF_TODO("ensure that the address is not invalid now");
         }
         else
             CLAUF_UNREACHABLE("invalid type");
