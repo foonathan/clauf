@@ -222,6 +222,22 @@ unsigned clauf::integer_rank_of(const type* ty)
 
 bool clauf::is_lvalue(const expr* e)
 {
+    if (dryad::node_has_kind<clauf::identifier_expr>(e))
+        return true;
+    else if (auto unary = dryad::node_try_cast<clauf::unary_expr>(e))
+        return unary->op() == clauf::unary_op::deref;
+    else
+        return false;
+}
+
+bool clauf::is_modifiable_lvalue(const expr* e)
+{
+    return is_lvalue(e) && is_complete_object_type(e->type())
+           && (type_qualifiers_of(e->type()) & clauf::qualified_type::const_) == 0;
+}
+
+bool clauf::is_lvalue_with_address(const expr* e)
+{
     if (auto id = dryad::node_try_cast<clauf::identifier_expr>(e))
     {
         if (auto var = dryad::node_try_cast<clauf::variable_decl>(id->declaration()))
@@ -233,12 +249,6 @@ bool clauf::is_lvalue(const expr* e)
         return unary->op() == clauf::unary_op::deref;
     else
         return false;
-}
-
-bool clauf::is_modifiable_lvalue(const expr* e)
-{
-    return is_lvalue(e) && is_complete_object_type(e->type())
-           && (type_qualifiers_of(e->type()) & clauf::qualified_type::const_) == 0;
 }
 
 bool clauf::is_static_lvalue(const expr* e)

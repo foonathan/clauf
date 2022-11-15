@@ -300,6 +300,7 @@ private:
 bool is_lvalue(const expr* e);
 bool is_modifiable_lvalue(const expr* e);
 bool is_static_lvalue(const expr* e);
+bool is_lvalue_with_address(const expr* e);
 
 bool is_named_constant(const expr* e);
 bool is_arithmetic_constant_expr(const expr* e);

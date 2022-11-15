@@ -728,7 +728,7 @@ struct expr : lexy::expression_production
                         || clauf::is_pointer_to_complete_object_type(child->type()))
                        && clauf::is_modifiable_lvalue(child);
             case clauf::unary_op::address:
-                return clauf::is_lvalue(child);
+                return clauf::is_lvalue_with_address(child);
             case clauf::unary_op::deref:
                 return clauf::is_pointer(child->type());
             }
