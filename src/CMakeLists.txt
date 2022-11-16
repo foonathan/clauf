@@ -20,7 +20,7 @@ include(FetchContent)
 FetchContent_Declare(lexy URL https://lexy.foonathan.net/download/lexy-src.zip)
 FetchContent_MakeAvailable(lexy)
 
-FetchContent_Declare(lauf URL https://github.com/foonathan/lauf/archive/1a867703ad75ef965ae1099dffd2508f2440010a.zip)
+FetchContent_Declare(lauf URL https://github.com/foonathan/lauf/archive/ebc45f4f76acc47291352422ac5cf9b3017e95a5.zip)
 FetchContent_MakeAvailable(lauf)
 
 FetchContent_Declare(dryad URL https://github.com/foonathan/dryad/archive/d45a60f88e9931b4ec09e069a5a125b09933febf.zip)
