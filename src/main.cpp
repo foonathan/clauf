@@ -29,6 +29,8 @@ struct options
 
 int main(const options& opts)
 {
+    auto exit_code = 0;
+
     auto file = lexy::read_file<lexy::utf8_char_encoding>(opts.input.c_str());
     if (!file)
     {
@@ -49,42 +51,45 @@ int main(const options& opts)
 
     auto vm  = lauf_create_vm(lauf_default_vm_options);
     auto mod = codegen(vm, *ast);
-    if (opts.dump_bytecode)
+    if (mod != nullptr)
     {
-        std::puts("=== BYTECODE ===");
-        auto writer = lauf_create_stdout_writer();
-        lauf_backend_dump(writer, lauf_backend_default_dump_options, mod);
-        lauf_destroy_writer(writer);
-        std::putchar('\n');
-    }
-
-    auto exit_code = 0;
-    if (!opts.compile_only)
-    {
-        auto main_fn = lauf_asm_find_function_by_name(mod, "main");
-        if (main_fn == nullptr)
+        if (opts.dump_bytecode)
         {
-            std::fprintf(stderr, "Program does not contain main.\n");
-            return 1;
-        }
-        if (auto sig = lauf_asm_function_signature(main_fn);
-            sig.input_count != 0 || sig.output_count != 1)
-        {
-            std::fprintf(stderr, "main signature is wrong: (%d => %d)\n", sig.input_count,
-                         sig.output_count);
-            return 1;
+            std::puts("=== BYTECODE ===");
+            auto writer = lauf_create_stdout_writer();
+            lauf_backend_dump(writer, lauf_backend_default_dump_options, mod);
+            lauf_destroy_writer(writer);
+            std::putchar('\n');
         }
 
-        auto program = lauf_asm_create_program(mod, main_fn);
+        if (!opts.compile_only)
+        {
+            auto main_fn = lauf_asm_find_function_by_name(mod, "main");
+            if (main_fn == nullptr)
+            {
+                std::fprintf(stderr, "Program does not contain main.\n");
+                return 1;
+            }
+            if (auto sig = lauf_asm_function_signature(main_fn);
+                sig.input_count != 0 || sig.output_count != 1)
+            {
+                std::fprintf(stderr, "main signature is wrong: (%d => %d)\n", sig.input_count,
+                             sig.output_count);
+                return 1;
+            }
 
-        lauf_runtime_value return_code;
-        if (!lauf_vm_execute_oneshot(vm, program, nullptr, &return_code))
-            return 1;
-        exit_code = static_cast<int>(return_code.as_sint);
+            auto program = lauf_asm_create_program(mod, main_fn);
+
+            lauf_runtime_value return_code;
+            if (!lauf_vm_execute_oneshot(vm, program, nullptr, &return_code))
+                return 1;
+            exit_code = static_cast<int>(return_code.as_sint);
+        }
+
+        lauf_asm_destroy_module(mod);
     }
-
-    lauf_asm_destroy_module(mod);
     lauf_destroy_vm(vm);
+
     // Exit code 70 is EX_SOFTWARE in sysexits.h
     return clauf::_detail::todo_reached ? 70 : exit_code;
 }

@@ -17,10 +17,12 @@
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/value.h>
 #include <lexy/input_location.hpp>
+#include <stdexcept>
 #include <vector>
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
+#include <clauf/diagnostic.hpp>
 
 //=== codegen ===//
 namespace
@@ -960,8 +962,26 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
         lauf_asm_define_global(&result_global_def, &program, result_global, result.data(),
                                result.size());
 
-        [[maybe_unused]] auto success = lauf_vm_execute_oneshot(ctx.vm, program, nullptr, nullptr);
-        CLAUF_ASSERT(success, "constant evaluation should not panic");
+        struct ph_data_t
+        {
+            const context&     ctx;
+            const clauf::expr* e;
+        } ph_data = {ctx, e};
+        auto ph   = [](void* data, lauf_runtime_process*, const char* msg) {
+            auto [ctx, e] = *static_cast<ph_data_t*>(data);
+            clauf::diagnostic_logger logger(ctx.ast->input);
+            logger.log(clauf::diagnostic_kind::error, "panic during constant evaluation '%s'", msg)
+                .annotation(clauf::annotation_kind::primary, ctx.ast->location_of(e),
+                              "while evaluating expr here")
+                .finish();
+        };
+        auto old_ph = lauf_vm_set_panic_handler(ctx.vm, {&ph_data, ph});
+
+        auto success = lauf_vm_execute_oneshot(ctx.vm, program, nullptr, nullptr);
+        if (!success)
+            throw std::runtime_error("constant evaluation panic");
+
+        lauf_vm_set_panic_handler(ctx.vm, old_ph);
     }
 
     return result;
@@ -969,6 +989,7 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
 } // namespace
 
 lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
+try
 {
     context ctx(ast, vm);
 
@@ -978,5 +999,9 @@ lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
             [&](const variable_decl* decl) { codegen_global(ctx, decl); });
 
     return ctx.mod;
+}
+catch (std::runtime_error&)
+{
+    return nullptr;
 }
 
