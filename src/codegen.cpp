@@ -32,14 +32,19 @@ struct context
     const clauf::ast*                                               ast;
     lauf_vm*                                                        vm;
     lauf_asm_module*                                                mod;
-    lauf_asm_builder*                                               builder;
     dryad::node_map<const clauf::variable_decl, lauf_asm_global*>   globals;
     dryad::node_map<const clauf::decl, lauf_asm_local*>             local_vars;
     dryad::node_map<const clauf::function_decl, lauf_asm_function*> functions;
 
+    // Used for codegen of a function.
+    lauf_asm_builder* fn_builder;
+    // Used for codegen of a chunk during constant evaluation.
+    lauf_asm_builder* chunk_builder;
+
     context(const clauf::ast& ast, lauf_vm* vm)
     : ast(&ast), vm(vm), mod(lauf_asm_create_module("main module")),
-      builder(lauf_asm_create_builder(lauf_asm_default_build_options))
+      fn_builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
+      chunk_builder(lauf_asm_create_builder(lauf_asm_default_build_options))
     {
         lauf_asm_set_module_debug_path(mod, ast.input.path);
     }
@@ -49,7 +54,8 @@ struct context
 
     ~context()
     {
-        lauf_asm_destroy_builder(builder);
+        lauf_asm_destroy_builder(fn_builder);
+        lauf_asm_destroy_builder(chunk_builder);
     }
 };
 
@@ -210,12 +216,12 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
     }
 }
 
-void codegen_expr(context& ctx, const clauf::expr* expr);
+void                       codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr);
+std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e);
 
 // Evalutes the expression as an lvalue and returns its type.
-lauf_asm_type codegen_lvalue(context& ctx, const clauf::expr* expr)
+lauf_asm_type codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 {
-    auto b    = ctx.builder;
     auto type = lauf_asm_type_value;
     dryad::visit_node_all(
         expr,
@@ -252,14 +258,13 @@ lauf_asm_type codegen_lvalue(context& ctx, const clauf::expr* expr)
         },
         [&](const clauf::unary_expr* expr) {
             // To evaluate a pointer as an lvalue, we don't actually want to dereference it.
-            codegen_expr(ctx, expr->child());
+            codegen_expr(ctx, b, expr->child());
         });
     return type;
 }
 
-void codegen_expr(context& ctx, const clauf::expr* expr)
+void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 {
-    auto b = ctx.builder;
     dryad::visit_tree(
         expr,
         [&](const clauf::nullptr_constant_expr*) {
@@ -481,7 +486,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
 
                 // Save a copy into the lvalue.
                 lauf_asm_inst_pick(b, 0);
-                auto type = codegen_lvalue(ctx, expr->child());
+                auto type = codegen_lvalue(ctx, b, expr->child());
                 lauf_asm_inst_store_field(b, type, 0);
 
                 // At this point, the new value is on the stack.
@@ -502,7 +507,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                                         expr);
 
                 // Store the new value in the lvalue, this removes it from the stack.
-                auto type = codegen_lvalue(ctx, expr->child());
+                auto type = codegen_lvalue(ctx, b, expr->child());
                 lauf_asm_inst_store_field(b, type, 0);
 
                 // At this point, the old value is on the stack.
@@ -512,7 +517,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             case clauf::unary_op::address:
                 // Remove the value of the child expression and push its address instead.
                 lauf_asm_inst_pop(b, 0);
-                codegen_lvalue(ctx, expr->child());
+                codegen_lvalue(ctx, b, expr->child());
                 break;
             case clauf::unary_op::deref:
                 // The address is on top of the stack.
@@ -683,7 +688,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             }
 
             // Push the address of the lvalue onto the stack.
-            auto type = codegen_lvalue(ctx, expr->left());
+            auto type = codegen_lvalue(ctx, b, expr->left());
             // Store the value into address.
             lauf_asm_inst_store_field(b, type, 0);
         },
@@ -717,8 +722,6 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             lauf_asm_build_block(b, block_end);
         });
 }
-
-std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e);
 
 lauf_asm_global* codegen_global(context& ctx, const clauf::variable_decl* decl)
 {
@@ -763,7 +766,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
 
     ctx.local_vars = {};
 
-    auto b = ctx.builder;
+    auto b = ctx.fn_builder;
     lauf_asm_build(b, ctx.mod, fn);
 
     // We create variables for all parameters and store the value into them.
@@ -913,7 +916,7 @@ lauf_asm_function* codegen_function(context& ctx, const clauf::function_decl* de
         },
         //=== expression ===//
         [&](dryad::child_visitor<clauf::node_kind>, const clauf::expr* expr) {
-            codegen_expr(ctx, expr);
+            codegen_expr(ctx, b, expr);
         });
 
     lauf_asm_build_debug_location(b, {0, 0, true});
@@ -939,19 +942,16 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
 
     auto chunk = lauf_asm_create_chunk(ctx.mod);
     {
-        auto old_builder = ctx.builder;
-        ctx.builder      = lauf_asm_create_builder(lauf_asm_default_build_options);
-        lauf_asm_build_chunk(ctx.builder, ctx.mod, chunk, 0);
+        auto b = ctx.chunk_builder;
+        lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
 
         // Store the result of the expression in the global.
-        codegen_expr(ctx, e);
-        lauf_asm_inst_global_addr(ctx.builder, result_global);
-        lauf_asm_inst_store_field(ctx.builder, type, 0);
+        codegen_expr(ctx, b, e);
+        lauf_asm_inst_global_addr(b, result_global);
+        lauf_asm_inst_store_field(b, type, 0);
 
-        lauf_asm_inst_return(ctx.builder);
-        lauf_asm_build_finish(ctx.builder);
-        lauf_asm_destroy_builder(ctx.builder);
-        ctx.builder = old_builder;
+        lauf_asm_inst_return(b);
+        lauf_asm_build_finish(b);
     }
 
     // We then execute that chunk.
