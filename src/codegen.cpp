@@ -32,6 +32,7 @@ struct context
     const clauf::ast*                                               ast;
     lauf_vm*                                                        vm;
     lauf_asm_module*                                                mod;
+    lauf_asm_global*                                                consteval_result_global;
     dryad::node_map<const clauf::variable_decl, lauf_asm_global*>   globals;
     dryad::node_map<const clauf::decl, lauf_asm_local*>             local_vars;
     dryad::node_map<const clauf::function_decl, lauf_asm_function*> functions;
@@ -43,10 +44,13 @@ struct context
 
     context(const clauf::ast& ast, lauf_vm* vm)
     : ast(&ast), vm(vm), mod(lauf_asm_create_module("main module")),
+      consteval_result_global(lauf_asm_add_global_native_data(mod)),
       fn_builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
       chunk_builder(lauf_asm_create_builder(lauf_asm_default_build_options))
     {
         lauf_asm_set_module_debug_path(mod, ast.input.path);
+        lauf_asm_set_global_debug_name(mod, consteval_result_global,
+                                       "constexpr_initialization_result");
     }
 
     context(const context&)            = delete;
@@ -935,19 +939,15 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
     std::vector<unsigned char> result;
     result.resize(type.layout.size);
 
-    // We create a chunk that will hold the bytecode for our expression,
-    // and a native global where we store the result.
-    auto result_global = lauf_asm_add_global_native_data(ctx.mod);
-    lauf_asm_set_global_debug_name(ctx.mod, result_global, "constexpr_initialization_result");
-
+    // We create a chunk that will hold the bytecode for our expression.
     auto chunk = lauf_asm_create_chunk(ctx.mod);
     {
         auto b = ctx.chunk_builder;
         lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
 
-        // Store the result of the expression in the global.
+        // Store the result of the expression in the native global.
         codegen_expr(ctx, b, e);
-        lauf_asm_inst_global_addr(b, result_global);
+        lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
         lauf_asm_inst_store_field(b, type, 0);
 
         lauf_asm_inst_return(b);
@@ -959,8 +959,8 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
         auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
 
         lauf_asm_global_definition result_global_def;
-        lauf_asm_define_global(&result_global_def, &program, result_global, result.data(),
-                               result.size());
+        lauf_asm_define_global(&result_global_def, &program, ctx.consteval_result_global,
+                               result.data(), result.size());
 
         struct ph_data_t
         {
