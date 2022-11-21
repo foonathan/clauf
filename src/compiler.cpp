@@ -63,6 +63,7 @@ struct compiler_state
 
 void insert_new_decl(compiler_state& state, clauf::decl* decl)
 {
+    // Check that we're allowed to add a declaration here.
     if (state.current_scope->kind != scope::local && state.current_scope->kind != scope::global)
     {
         state.logger.log(clauf::diagnostic_kind::error, "declaration not allowed in this scope")
@@ -71,12 +72,30 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
     }
 
     auto shadowed = state.current_scope->symbols.insert_or_shadow(decl->name(), decl);
-    if (shadowed != nullptr)
+    if (shadowed == nullptr)
+        return;
+
+    // Check for duplicate definition.
+    if (shadowed->has_definition() && decl->has_definition())
     {
         auto name = decl->name().c_str(state.ast.symbols);
         state.logger
-            .log(clauf::diagnostic_kind::error, "duplicate %s declaration '%s'",
+            .log(clauf::diagnostic_kind::error, "duplicate %s definition '%s'",
                  state.current_scope->kind == scope::global ? "global" : "local", name)
+            .annotation(clauf::annotation_kind::secondary, state.ast.location_of(shadowed),
+                        "first declaration")
+            .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                        "second declaration")
+            .finish();
+        return;
+    }
+
+    // Check that we have the same declaration.
+    if (!clauf::is_same(shadowed->type(), decl->type()))
+    {
+        auto name = decl->name().c_str(state.ast.symbols);
+        state.logger
+            .log(clauf::diagnostic_kind::error, "redeclaration of '%s' with a different type", name)
             .annotation(clauf::annotation_kind::secondary, state.ast.location_of(shadowed),
                         "first declaration")
             .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
@@ -1555,11 +1574,16 @@ struct declaration
         auto name = get_name(declarator);
         auto type = get_type(state.ast.types, declarator, ty_spec.type);
 
-        auto default_linkage = state.current_scope == &state.global_scope ? clauf::linkage::external
-                                                                          : clauf::linkage::none;
-        auto default_storage = state.current_scope == &state.global_scope
-                                   ? clauf::storage_duration::static_
-                                   : clauf::storage_duration::automatic;
+        auto default_linkage
+            = state.current_scope == &state.global_scope
+                      || dryad::node_has_kind<clauf::function_declarator>(declarator)
+                  ? clauf::linkage::external
+                  : clauf::linkage::none;
+        auto default_storage
+            = state.current_scope == &state.global_scope
+                      || ty_spec.linkage.value_or(default_linkage) == clauf::linkage::external
+                  ? clauf::storage_duration::static_
+                  : clauf::storage_duration::automatic;
 
         if (ty_spec.is_constexpr)
         {
@@ -1582,12 +1606,20 @@ struct declaration
                     .finish();
             }
 
-            return state.ast.create<clauf::variable_decl>(name.loc,
-                                                          ty_spec.linkage.value_or(default_linkage),
-                                                          name.symbol,
-                                                          ty_spec.storage_duration.value_or(
-                                                              default_storage),
-                                                          ty_spec.is_constexpr, type);
+            auto var
+                = state.ast.create<clauf::variable_decl>(name.loc,
+                                                         ty_spec.linkage.value_or(default_linkage),
+                                                         name.symbol,
+                                                         ty_spec.storage_duration.value_or(
+                                                             default_storage),
+                                                         ty_spec.is_constexpr, type);
+
+            // If the linkage is external, we have used the extern keyword at the declaration.
+            // This makes it a forward declaration of the variable.
+            if (ty_spec.linkage != clauf::linkage::external)
+                var->make_definition();
+
+            return var;
         };
         return dryad::visit_node_all(
             declarator,
@@ -1613,6 +1645,7 @@ struct declaration
                         .finish();
                 }
 
+                // This is never a definition, since we don't have a function body.
                 return state.ast.create<clauf::function_decl>(name.loc,
                                                               ty_spec.linkage.value_or(
                                                                   default_linkage),
@@ -1643,6 +1676,15 @@ struct declaration
                     state.logger
                         .log(clauf::diagnostic_kind::error,
                              "initializer for global variable needs to be a constant expression")
+                        .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                                    "here")
+                        .finish();
+                }
+                if (!var_decl->is_definition())
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error,
+                             "variable forward declaration cannot have an initializer")
                         .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
                                     "here")
                         .finish();
@@ -1714,22 +1756,12 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
                     .finish();
             }
 
-            auto existing_decl = state.current_scope->symbols.lookup(name.symbol);
-            auto fn_decl = existing_decl ? dryad::node_try_cast<clauf::function_decl>(existing_decl)
-                                         : nullptr;
-            if (fn_decl != nullptr)
-            {
-                // TODO: verify that definition matches declaration
-            }
-            else
-            {
-                fn_decl
-                    = state.ast.create<clauf::function_decl>(name.loc,
-                                                             ty_spec.value().linkage.value_or(
-                                                                 clauf::linkage::external),
-                                                             name.symbol, type, decl->parameters());
-                insert_new_decl(state, fn_decl);
-            }
+            auto fn_decl
+                = state.ast.create<clauf::function_decl>(name.loc,
+                                                         ty_spec.value().linkage.value_or(
+                                                             clauf::linkage::external),
+                                                         name.symbol, type, decl->parameters());
+            insert_new_decl(state, fn_decl);
 
             state.current_function = fn_decl;
             scope local_scope(scope::local, state.current_scope);
@@ -1740,6 +1772,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             auto body = scanner.parse(grammar::block_stmt{});
             if (!body)
                 return lexy::scan_failed;
+            fn_decl->make_definition();
             fn_decl->set_body(body.value());
 
             state.current_scope    = state.current_scope->parent;
@@ -1778,6 +1811,31 @@ struct translation_unit
 };
 } // namespace clauf::grammar
 
+namespace
+{
+void resolve_forward_declarations(compiler_state& state)
+{
+    // Collect all definitions of extern declarations in a map.
+    dryad::symbol_table<clauf::ast_symbol, clauf::decl*> extern_definitions;
+    dryad::visit_tree(state.ast.tree, [&](clauf::decl* decl) {
+        if (decl->has_definition() && decl->linkage() == clauf::linkage::external)
+            // Note: this can't shadow in a well-formed program, as we checked for duplicate
+            // definition.
+            extern_definitions.insert_or_shadow(decl->name(), decl);
+    });
+
+    // Resolve all declarations of extern symbols.
+    dryad::visit_tree(state.ast.tree, [&](clauf::decl* decl) {
+        if (!decl->has_definition() && decl->linkage() == clauf::linkage::external)
+        {
+            auto def = extern_definitions.lookup(decl->name());
+            if (def != nullptr)
+                decl->set_definition(def);
+        }
+    });
+}
+} // namespace
+
 std::optional<clauf::ast> clauf::compile(file&& input)
 {
     compiler_state state(input);
@@ -1788,6 +1846,9 @@ std::optional<clauf::ast> clauf::compile(file&& input)
 
     state.ast.tree.set_root(result.value());
     state.ast.input = std::move(input);
+
+    resolve_forward_declarations(state);
+
     return std::move(state.ast);
 }
 

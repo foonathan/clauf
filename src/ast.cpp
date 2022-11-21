@@ -848,6 +848,11 @@ void clauf::dump_ast(const ast& ast)
                     if (var->is_constexpr())
                         std::printf(" [constexpr]");
                 }
+
+                if (!d->has_definition())
+                    std::printf(" [no definition]");
+                else if (d->is_definition())
+                    std::printf(" [definition]");
             });
 
         std::putchar('\n');

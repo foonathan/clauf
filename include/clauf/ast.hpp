@@ -769,9 +769,32 @@ public:
         return linkage_impl();
     }
 
+    bool is_definition() const
+    {
+        return _definition == this;
+    }
+    bool has_definition() const
+    {
+        return _definition != nullptr;
+    }
+
+    clauf::decl* definition() const
+    {
+        return _definition;
+    }
+
+    void make_definition()
+    {
+        _definition = this;
+    }
+    void set_definition(clauf::decl* def)
+    {
+        _definition = def;
+    }
+
 protected:
     explicit decl(dryad::node_ctor ctor, node_kind kind, ast_symbol name, const clauf::type* type)
-    : node_base(ctor, kind), _name(name), _type(type)
+    : node_base(ctor, kind), _name(name), _type(type), _definition(nullptr)
     {
         set_linkage_impl(clauf::linkage::none);
     }
@@ -781,6 +804,7 @@ protected:
 private:
     ast_symbol         _name;
     const clauf::type* _type;
+    clauf::decl*       _definition;
 };
 
 enum class storage_duration : std::uint8_t
@@ -822,6 +846,15 @@ public:
     clauf::storage_duration storage_duration() const
     {
         return _sd;
+    }
+
+    variable_decl* definition() const
+    {
+        return dryad::node_cast<variable_decl>(decl::definition());
+    }
+    void set_definition(variable_decl* def)
+    {
+        decl::set_definition(def);
     }
 
 private:
@@ -868,6 +901,15 @@ public:
     void set_body(clauf::block_stmt* block)
     {
         insert_child_after(_last_param, block);
+    }
+
+    function_decl* definition() const
+    {
+        return dryad::node_cast<function_decl>(decl::definition());
+    }
+    void set_definition(function_decl* def)
+    {
+        decl::set_definition(def);
     }
 
 private:
