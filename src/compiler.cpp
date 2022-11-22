@@ -89,19 +89,6 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
             .finish();
         return;
     }
-
-    // Check that we have the same declaration.
-    if (!clauf::is_same(shadowed->type(), decl->type()))
-    {
-        auto name = decl->name().c_str(state.ast.symbols);
-        state.logger
-            .log(clauf::diagnostic_kind::error, "redeclaration of '%s' with a different type", name)
-            .annotation(clauf::annotation_kind::secondary, state.ast.location_of(shadowed),
-                        "first declaration")
-            .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
-                        "second declaration")
-            .finish();
-    }
 }
 
 void check_inside_loop(compiler_state& state, clauf::location loc)
@@ -1813,8 +1800,10 @@ struct translation_unit
 
 namespace
 {
-void resolve_forward_declarations(compiler_state& state)
+bool resolve_forward_declarations(compiler_state& state)
 {
+    auto success = true;
+
     // Collect all definitions of extern declarations in a map.
     dryad::symbol_table<clauf::ast_symbol, clauf::decl*> extern_definitions;
     dryad::visit_tree(state.ast.tree, [&](clauf::decl* decl) {
@@ -1829,10 +1818,52 @@ void resolve_forward_declarations(compiler_state& state)
         if (!decl->has_definition() && decl->linkage() == clauf::linkage::external)
         {
             auto def = extern_definitions.lookup(decl->name());
-            if (def != nullptr)
+            if (def == nullptr)
+            {
+                auto name = decl->name().c_str(state.ast.symbols);
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "undefined declaration of '%s'", name)
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                                "forward declaration here")
+                    .finish();
+                success = false;
+                return;
+            }
+
+            if (decl->kind() != def->kind())
+            {
+                auto name = decl->name().c_str(state.ast.symbols);
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "redeclaration of '%s' as a different entity", name)
+                    .annotation(clauf::annotation_kind::secondary, state.ast.location_of(def),
+                                "definition")
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                                "forward declaration")
+                    .finish();
+                success = false;
+            }
+            else if (!clauf::is_same(decl->type(), def->type()))
+            {
+                auto name = decl->name().c_str(state.ast.symbols);
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "redeclaration of '%s' with a different type", name)
+                    .annotation(clauf::annotation_kind::secondary, state.ast.location_of(def),
+                                "definition")
+                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                                "forward declaration")
+                    .finish();
+                success = false;
+            }
+            else
+            {
                 decl->set_definition(def);
+            }
         }
     });
+
+    return success;
 }
 } // namespace
 
@@ -1845,10 +1876,10 @@ std::optional<clauf::ast> clauf::compile(file&& input)
         return std::nullopt;
 
     state.ast.tree.set_root(result.value());
+    if (!resolve_forward_declarations(state))
+        return std::nullopt;
+
     state.ast.input = std::move(input);
-
-    resolve_forward_declarations(state);
-
     return std::move(state.ast);
 }
 
