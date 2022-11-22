@@ -44,7 +44,7 @@ struct context
 
     context(const clauf::ast& ast, lauf_vm* vm)
     : ast(&ast), vm(vm), mod(lauf_asm_create_module("main module")),
-      consteval_result_global(lauf_asm_add_native_global(mod, true)),
+      consteval_result_global(lauf_asm_add_global(mod, LAUF_ASM_GLOBAL_READ_WRITE)),
       fn_builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
       chunk_builder(lauf_asm_create_builder(lauf_asm_default_build_options))
     {
@@ -729,12 +729,11 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
 lauf_asm_global* codegen_global_header(context& ctx, const clauf::variable_decl* decl)
 {
-    auto layout = codegen_type(decl->type()).layout;
-
     auto qualifiers = clauf::type_qualifiers_of(decl->type());
     auto is_const   = (qualifiers & clauf::qualified_type::const_) != 0;
 
-    auto global = lauf_asm_add_global(ctx.mod, layout, !is_const);
+    auto global = lauf_asm_add_global(ctx.mod, is_const ? LAUF_ASM_GLOBAL_READ_ONLY
+                                                        : LAUF_ASM_GLOBAL_READ_WRITE);
     lauf_asm_set_global_debug_name(ctx.mod, global, decl->name().c_str(ctx.ast->symbols));
     ctx.globals.insert(decl, global);
     return global;
@@ -743,11 +742,16 @@ lauf_asm_global* codegen_global_header(context& ctx, const clauf::variable_decl*
 lauf_asm_global* codegen_global_init(context& ctx, const clauf::variable_decl* decl)
 {
     auto global = *ctx.globals.lookup(decl);
+    auto layout = codegen_type(decl->type()).layout;
 
     if (decl->has_initializer())
     {
         auto init = constant_eval(ctx, decl->initializer());
-        lauf_asm_set_global_initializer(ctx.mod, global, init.data());
+        lauf_asm_define_data_global(ctx.mod, global, layout, init.data());
+    }
+    else
+    {
+        lauf_asm_define_data_global(ctx.mod, global, layout, nullptr);
     }
 
     return global;
@@ -962,9 +966,9 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
     {
         auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
 
-        lauf_asm_global_definition result_global_def;
-        lauf_asm_define_global(&result_global_def, &program, ctx.consteval_result_global,
-                               result.data(), result.size());
+        lauf_asm_native_global result_native_global;
+        lauf_asm_define_native_global(&result_native_global, &program, ctx.consteval_result_global,
+                                      result.data(), result.size());
 
         struct ph_data_t
         {
