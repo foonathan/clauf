@@ -966,7 +966,7 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
     {
         auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
 
-        lauf_asm_native_global result_native_global;
+        lauf_asm_native result_native_global;
         lauf_asm_define_native_global(&result_native_global, &program, ctx.consteval_result_global,
                                       result.data(), result.size());
 
