@@ -101,6 +101,19 @@ lauf_asm_type codegen_type(const clauf::type* ty)
         [](const clauf::qualified_type* ty) { return codegen_type(ty->unqualified_type()); });
 }
 
+lauf_asm_layout codegen_layout(const clauf::type* ty)
+{
+    if (auto array_ty = dryad::node_try_cast<clauf::array_type>(ty))
+    {
+        auto element_layout = codegen_layout(array_ty->element_type());
+        return lauf_asm_array_layout(element_layout, array_ty->size());
+    }
+    else
+    {
+        return codegen_type(ty).layout;
+    }
+}
+
 template <typename Op, typename Expr>
 void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
 {
@@ -288,14 +301,14 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             lauf_asm_inst_uint(b, expr->value());
         },
         [&](const clauf::type_constant_expr* expr) {
-            auto lauf_type = codegen_type(expr->operand_type());
+            auto layout = codegen_layout(expr->operand_type());
             switch (expr->op())
             {
             case clauf::type_constant_expr::sizeof_:
-                lauf_asm_inst_uint(b, lauf_type.layout.size);
+                lauf_asm_inst_uint(b, layout.size);
                 break;
             case clauf::type_constant_expr::alignof_:
-                lauf_asm_inst_uint(b, lauf_type.layout.alignment);
+                lauf_asm_inst_uint(b, layout.alignment);
                 break;
             }
         },
@@ -737,7 +750,7 @@ lauf_asm_global* codegen_global_header(context& ctx, const clauf::variable_decl*
 lauf_asm_global* codegen_global_init(context& ctx, const clauf::variable_decl* decl)
 {
     auto global = *ctx.globals.lookup(decl);
-    auto layout = codegen_type(decl->type()).layout;
+    auto layout = codegen_layout(decl->type());
 
     if (decl->has_initializer())
     {
@@ -907,15 +920,17 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::variable_decl* decl) {
-            auto type = codegen_type(decl->type());
             if (decl->storage_duration() != clauf::storage_duration::static_)
             {
-                auto var = lauf_asm_build_local(b, type.layout);
+                auto layout = codegen_layout(decl->type());
+                auto var    = lauf_asm_build_local(b, layout);
                 ctx.local_vars.insert(decl, var);
 
                 if (decl->has_initializer())
                 {
                     visitor(decl->initializer());
+
+                    auto type = codegen_type(decl->type());
                     lauf_asm_inst_local_addr(b, var);
                     lauf_asm_inst_store_field(b, type, 0);
                 }
@@ -990,6 +1005,16 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
     return result;
 }
 } // namespace
+
+std::size_t clauf::constant_eval_integer_expr(lauf_vm* vm, const ast& ast, const expr* expr)
+{
+    context ctx(ast, vm);
+    auto    data = constant_eval(ctx, expr);
+
+    lauf_runtime_value result;
+    std::memcpy(&result, data.data(), data.size());
+    return std::size_t(result.as_uint);
+}
 
 lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
 try

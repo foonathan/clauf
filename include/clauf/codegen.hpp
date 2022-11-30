@@ -13,6 +13,8 @@ namespace clauf
 struct ast;
 class expr;
 
+std::size_t constant_eval_integer_expr(lauf_vm* vm, const ast& ast, const expr* expr);
+
 lauf_asm_module* codegen(lauf_vm* vm, const ast& ast);
 } // namespace clauf
 

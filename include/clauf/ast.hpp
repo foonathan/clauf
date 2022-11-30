@@ -21,6 +21,7 @@ enum class type_node_kind
 {
     builtin_type,
     pointer_type,
+    array_type,
     function_type,
     qualified_type,
 };
@@ -75,6 +76,27 @@ public:
     DRYAD_CHILD_NODE_GETTER(type, pointee_type, nullptr)
 };
 
+/// An array type.
+class array_type : public dryad::basic_node<type_node_kind::array_type, dryad::container_node<type>>
+{
+public:
+    explicit array_type(dryad::node_ctor ctor, type* element_type, std::size_t size)
+    : node_base(ctor), _size(size)
+    {
+        insert_child_after(nullptr, element_type);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(type, element_type, nullptr)
+
+    std::size_t size() const
+    {
+        return _size;
+    }
+
+private:
+    std::size_t _size;
+};
+
 /// A function type like int(void).
 class function_type
 : public dryad::basic_node<type_node_kind::function_type, dryad::container_node<type>>
@@ -123,8 +145,8 @@ private:
     DRYAD_ATTRIBUTE_USER_DATA16(qualifier_t, qualifiers_impl);
 };
 
-struct type_hasher
-: dryad::node_hasher_base<type_hasher, builtin_type, pointer_type, function_type, qualified_type>
+struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_type, array_type,
+                                             function_type, qualified_type>
 {
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm& hasher, const builtin_type* n)
@@ -139,6 +161,11 @@ struct type_hasher
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm&, const pointer_type*)
     {}
+    template <typename HashAlgorithm>
+    static void hash(HashAlgorithm& hasher, const array_type* array)
+    {
+        hasher.hash_scalar(array->size());
+    }
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm&, const function_type*)
     {}
@@ -159,6 +186,10 @@ struct type_hasher
     static bool is_equal(const pointer_type*, const pointer_type*)
     {
         return true;
+    }
+    static bool is_equal(const array_type* lhs, const array_type* rhs)
+    {
+        return lhs->size() == rhs->size();
     }
     static bool is_equal(const function_type*, const function_type*)
     {
@@ -938,6 +969,7 @@ namespace clauf
 enum class declarator_kind
 {
     name,
+    array,
     function,
     pointer,
 
@@ -960,6 +992,27 @@ public:
 
 private:
     clauf::name _name;
+};
+
+class array_declarator
+: public dryad::basic_node<declarator_kind::array, dryad::container_node<declarator>>
+{
+public:
+    explicit array_declarator(dryad::node_ctor ctor, declarator* child, std::size_t size)
+    : node_base(ctor), _size(size)
+    {
+        insert_child_after(nullptr, child);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(declarator, child, nullptr)
+
+    std::size_t size() const
+    {
+        return _size;
+    }
+
+private:
+    std::size_t _size;
 };
 
 class function_declarator

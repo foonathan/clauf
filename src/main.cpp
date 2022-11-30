@@ -38,7 +38,8 @@ int main(const options& opts)
         return 1;
     }
 
-    auto ast = compile(clauf::file{file.buffer(), opts.input.c_str()});
+    auto vm  = lauf_create_vm(lauf_default_vm_options);
+    auto ast = compile(vm, clauf::file{file.buffer(), opts.input.c_str()});
     if (!ast)
         return 1;
 
@@ -49,7 +50,6 @@ int main(const options& opts)
         std::putchar('\n');
     }
 
-    auto vm  = lauf_create_vm(lauf_default_vm_options);
     auto mod = codegen(vm, *ast);
     if (mod != nullptr)
     {

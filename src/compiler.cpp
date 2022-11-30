@@ -13,6 +13,7 @@
 
 #include <clauf/assert.hpp>
 #include <clauf/ast.hpp>
+#include <clauf/codegen.hpp>
 #include <clauf/diagnostic.hpp>
 
 namespace
@@ -39,6 +40,7 @@ struct scope
 struct compiler_state
 {
     clauf::diagnostic_logger       logger;
+    lauf_vm*                       vm;
     clauf::ast                     ast;
     dryad::tree<clauf::declarator> decl_tree;
 
@@ -48,8 +50,8 @@ struct compiler_state
 
     int symbol_generator_count;
 
-    compiler_state(const clauf::file& input)
-    : logger(input), global_scope(scope::global, nullptr), current_scope(&global_scope),
+    compiler_state(lauf_vm* vm, const clauf::file& input)
+    : logger(input), vm(vm), global_scope(scope::global, nullptr), current_scope(&global_scope),
       symbol_generator_count(0)
     {}
 
@@ -1494,14 +1496,15 @@ struct declarator : lexy::expression_production
         using operand = dsl::atom;
     };
 
-    struct function_declarator : dsl::postfix_op
+    struct postfix_declarator : dsl::postfix_op
     {
         static constexpr auto op
-            = dsl::op<function_declarator>(LEXY_LIT("(") >> dsl::recurse<parameter_list>);
+            = dsl::op<postfix_declarator>(LEXY_LIT("(") >> dsl::recurse<parameter_list>)
+              / dsl::op<postfix_declarator>(dsl::square_bracketed(dsl::p<assignment_expr>));
         using operand = pointer_declarator;
     };
 
-    using operation = function_declarator;
+    using operation = postfix_declarator;
 
     static constexpr auto value = callback<clauf::declarator*>( //
         [](const compiler_state&, clauf::declarator* decl) { return decl; },
@@ -1519,7 +1522,12 @@ struct declarator : lexy::expression_production
         [](compiler_state& state, clauf::name name) {
             return state.decl_tree.create<clauf::name_declarator>(name);
         },
-        [](compiler_state& state, clauf::declarator* child, function_declarator,
+        [](compiler_state& state, clauf::declarator* child, postfix_declarator, clauf::expr* expr) {
+            dryad::leak_node(expr);
+            auto size = clauf::constant_eval_integer_expr(state.vm, state.ast, expr);
+            return state.decl_tree.create<clauf::array_declarator>(child, size);
+        },
+        [](compiler_state& state, clauf::declarator* child, postfix_declarator,
            clauf::parameter_list params) {
             return state.decl_tree.create<clauf::function_declarator>(child, params);
         },
@@ -1674,6 +1682,7 @@ struct declaration
                 return create_var();
             },
             [&](const clauf::pointer_declarator*) -> clauf::decl* { return create_var(); },
+            [&](const clauf::array_declarator*) -> clauf::decl* { return create_var(); },
             [&](const clauf::function_declarator* decl) -> clauf::decl* {
                 if (!ty_spec.is_valid_for_function())
                 {
@@ -1919,9 +1928,9 @@ bool resolve_forward_declarations(compiler_state& state)
 }
 } // namespace
 
-std::optional<clauf::ast> clauf::compile(file&& input)
+std::optional<clauf::ast> clauf::compile(lauf_vm* vm, file&& input)
 {
-    compiler_state state(input);
+    compiler_state state(vm, input);
     auto           result = lexy::parse<clauf::grammar::translation_unit>(input.buffer, state,
                                                                 state.logger.error_callback());
     if (!result || !state.logger)

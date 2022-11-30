@@ -15,6 +15,10 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
         [&](const clauf::pointer_type* ty) -> clauf::type* {
             return creator.create<clauf::pointer_type>(clone(creator, ty->pointee_type()));
         },
+        [&](const clauf::array_type* ty) -> clauf::type* {
+            return creator.create<clauf::array_type>(clone(creator, ty->element_type()),
+                                                     ty->size());
+        },
         [&](const clauf::function_type* ty) -> clauf::type* {
             clauf::type_list params;
             for (auto param : ty->parameters())
@@ -425,6 +429,7 @@ clauf::name clauf::get_name(const declarator* decl)
 {
     return dryad::visit_node_all(
         decl, [](const name_declarator* decl) { return decl->name(); },
+        [](const array_declarator* decl) { return get_name(decl->child()); },
         [](const function_declarator* decl) { return get_name(decl->child()); },
         [](const pointer_declarator* decl) { return get_name(decl->child()); },
         [](const init_declarator* decl) { return get_name(decl->child()); });
@@ -452,6 +457,13 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
                 if (decl->qualifiers() != clauf::qualified_type::unqualified)
                     result = creator.create<clauf::qualified_type>(decl->qualifiers(), result);
                 return result;
+            });
+        },
+        [&](const clauf::array_declarator* decl) {
+            auto child_type = get_type(types, decl->child(), decl_type);
+            return types.build([&](clauf::type_forest::node_creator creator) {
+                return creator.create<clauf::array_type>(clauf::clone(creator, child_type),
+                                                         decl->size());
             });
         },
         [&](const clauf::function_declarator* decl) {
@@ -570,6 +582,9 @@ void dump_type(const clauf::type* ty)
             }
         },
         [](dryad::traverse_event_enter, const clauf::pointer_type*) { std::printf("* "); },
+        [](dryad::traverse_event_enter, const clauf::array_type* ty) {
+            std::printf("[%zu] ", ty->size());
+        },
         [](dryad::child_visitor<clauf::type_node_kind> visitor, const clauf::function_type* ty) {
             std::printf("(");
             for (auto param : ty->parameters())
