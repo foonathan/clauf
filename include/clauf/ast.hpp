@@ -209,6 +209,7 @@ enum class node_kind
     identifier_expr,
     function_call_expr,
     cast_expr,
+    lvalue_conversion_expr,
     unary_expr,
     arithmetic_expr,
     comparison_expr,
@@ -444,6 +445,20 @@ class cast_expr : public dryad::basic_node<node_kind::cast_expr, expr>
 {
 public:
     explicit cast_expr(dryad::node_ctor ctor, const clauf::type* target_type, clauf::expr* child)
+    : node_base(ctor, target_type)
+    {
+        insert_child_after(nullptr, child);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(expr, child, nullptr)
+};
+
+/// An lvalue conversion that converts an lvalue expression into its value.
+class lvalue_conversion_expr : public dryad::basic_node<node_kind::lvalue_conversion_expr, expr>
+{
+public:
+    explicit lvalue_conversion_expr(dryad::node_ctor ctor, const clauf::type* target_type,
+                                    clauf::expr* child)
     : node_base(ctor, target_type)
     {
         insert_child_after(nullptr, child);

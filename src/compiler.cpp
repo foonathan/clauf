@@ -109,6 +109,15 @@ void check_inside_loop(compiler_state& state, clauf::location loc)
     }
 }
 
+// If the expression is an lvalue, creates an lvalue conversion.
+clauf::expr* do_lvalue_conversion(compiler_state& state, clauf::location loc, clauf::expr* expr)
+{
+    if (!clauf::is_lvalue(expr))
+        return expr;
+
+    return state.ast.create<clauf::lvalue_conversion_expr>(loc, expr->type(), expr);
+}
+
 // Attempts to convert the value expression to target_type by creating a cast_expr or raising an
 // error.
 clauf::expr* do_assignment_conversion(compiler_state& state, clauf::location loc,
@@ -546,6 +555,8 @@ struct builtin_expr
     static constexpr auto value = callback<clauf::builtin_expr*>(
         [](compiler_state& state, const char* pos, clauf::builtin_expr::builtin_t builtin,
            clauf::expr* child) {
+            child = do_lvalue_conversion(state, pos, child);
+
             auto type = [&]() -> const clauf::type* {
                 if (builtin == clauf::builtin_expr::malloc)
                     return state.ast.types.build([&](clauf::type_forest::node_creator creator) {
@@ -755,6 +766,8 @@ struct expr : lexy::expression_production
         }
         else if (op == clauf::unary_op::deref)
         {
+            child = do_lvalue_conversion(state, op.loc, child);
+
             auto type
                 = dryad::node_cast<clauf::pointer_type>(clauf::unqualified_type_of(child->type()))
                       ->pointee_type();
@@ -764,13 +777,18 @@ struct expr : lexy::expression_production
         {
             // We need to do integer promotion as it's defined in terms of ==, which does integer
             // promotion.
+            child     = do_lvalue_conversion(state, op.loc, child);
             child     = do_integer_promotion(state, op.loc, child);
             auto type = state.ast.create(clauf::builtin_type::sint64);
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
         }
         else
         {
-            // For increment/decrement, we need to do the usual artihmetic conversions between
+            if (op != clauf::unary_op::post_inc && op != clauf::unary_op::pre_inc
+                && op != clauf::unary_op::post_dec && op != clauf::unary_op::pre_dec)
+                child = do_lvalue_conversion(state, op.loc, child);
+
+            // For increment/decrement, we need to do the usual arithmetic conversions between
             // `child` and the number 1. However, if we assume that 1 already has the correct type,
             // this just does integer promotion on `child`, so we can just call that instead.
             //
@@ -805,6 +823,8 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, const char* pos, const clauf::type* target_type,
            clauf::expr* child) -> clauf::expr* {
+            child = do_lvalue_conversion(state, pos, child);
+
             // Check that the target type is valid.
             if (!clauf::is_scalar(target_type) && !clauf::is_void(target_type))
             {
@@ -834,6 +854,8 @@ struct expr : lexy::expression_production
                 return state.ast.create<clauf::cast_expr>(pos, target_type, child);
         },
         [](compiler_state& state, clauf::expr* fn, op_tag<> op, clauf::expr_list arguments) {
+            fn = do_lvalue_conversion(state, op.loc, fn);
+
             auto fn_type = dryad::node_try_cast<clauf::function_type>(fn->type());
             if (fn_type == nullptr)
             {
@@ -855,8 +877,10 @@ struct expr : lexy::expression_production
             while (!arguments.empty() && cur_param != end_param)
             {
                 auto argument = arguments.pop_front();
-                argument      = do_assignment_conversion(state, state.ast.location_of(argument),
-                                                         assignment_op::none, *cur_param, argument);
+                auto loc      = state.ast.location_of(argument);
+                argument      = do_lvalue_conversion(state, loc, argument);
+                argument = do_assignment_conversion(state, loc, assignment_op::none, *cur_param,
+                                                    argument);
                 converted_arguments.push_back(argument);
 
                 ++cur_param;
@@ -880,6 +904,8 @@ struct expr : lexy::expression_production
             if (!clauf::is_pointer(ptr->type()))
                 std::swap(ptr, index);
 
+            index = do_lvalue_conversion(state, op.loc, index);
+
             if (!clauf::is_pointer_to_complete_object_type(ptr->type())
                 || !clauf::is_integer(index->type()))
             {
@@ -902,6 +928,9 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::arithmetic_op> op,
            clauf::expr* right) {
+            left  = do_lvalue_conversion(state, op.loc, left);
+            right = do_lvalue_conversion(state, op.loc, right);
+
             const clauf::type* type          = nullptr;
             auto               is_valid_type = [&] {
                 switch (op)
@@ -984,6 +1013,9 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::comparison_op> op,
            clauf::expr* right) {
+            left  = do_lvalue_conversion(state, op.loc, left);
+            right = do_lvalue_conversion(state, op.loc, right);
+
             if (clauf::is_arithmetic(left->type()) && clauf::is_arithmetic(right->type()))
             {
                 do_usual_arithmetic_conversions(state, op.loc, left, right);
@@ -1006,6 +1038,9 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::sequenced_op> op,
            clauf::expr* right) {
+            left  = do_lvalue_conversion(state, op.loc, left);
+            right = do_lvalue_conversion(state, op.loc, right);
+
             if (op == clauf::sequenced_op::comma)
             {
                 // The type of the comma operator is the type of the right expression.
@@ -1029,6 +1064,8 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
+            right = do_lvalue_conversion(state, op.loc, right);
+
             if (!clauf::is_modifiable_lvalue(left))
             {
                 state.logger
@@ -1042,6 +1079,10 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* condition, op_tag<int> op, clauf::expr* if_true,
            clauf::expr* if_false) {
+            condition = do_lvalue_conversion(state, op.loc, condition);
+            if_true   = do_lvalue_conversion(state, op.loc, if_true);
+            if_false  = do_lvalue_conversion(state, op.loc, if_false);
+
             if (!clauf::is_scalar(condition->type()))
             {
                 state.logger
@@ -1071,6 +1112,15 @@ struct unary_expr : lexy::subexpression_production<expr, expr::unary>
 {};
 struct assignment_expr : lexy::subexpression_production<expr, expr::assignment>
 {};
+
+struct expr_as_rvalue
+{
+    static constexpr auto rule = dsl::position(dsl::p<expr>);
+    static constexpr auto value
+        = callback<clauf::expr*>([](compiler_state& state, const char* pos, clauf::expr* expr) {
+              return do_lvalue_conversion(state, pos, expr);
+          });
+};
 } // namespace clauf::grammar
 
 //=== statement parsing ===//
@@ -1093,14 +1143,15 @@ struct decl_stmt
 
 struct expr_stmt
 {
-    static constexpr auto rule  = dsl::position + dsl::p<expr> + dsl::semicolon;
+    static constexpr auto rule  = dsl::position + dsl::p<expr_as_rvalue> + dsl::semicolon;
     static constexpr auto value = construct<clauf::expr_stmt>;
 };
 
 struct return_stmt
 {
-    static constexpr auto rule = dsl::position(kw_return)
-                                 >> (dsl::semicolon | dsl::else_ >> dsl::p<expr> + dsl::semicolon);
+    static constexpr auto rule
+        = dsl::position(kw_return)
+          >> (dsl::semicolon | dsl::else_ >> dsl::p<expr_as_rvalue> + dsl::semicolon);
     static constexpr auto value = callback<clauf::return_stmt*>(
         [](compiler_state& state, const char* pos) {
             if (!clauf::is_void(state.current_function->type()->return_type()))
@@ -1166,7 +1217,8 @@ struct if_stmt
 {
     static constexpr auto rule
         = dsl::position(kw_if)
-          >> dsl::parenthesized(dsl::p<expr>) + dsl::p<secondary_block<scope::local_if>> //
+          >> dsl::parenthesized(dsl::p<expr_as_rvalue>)
+                 + dsl::p<secondary_block<scope::local_if>> //
                  + dsl::if_(kw_else >> dsl::recurse<secondary_block<scope::local_if>>);
     static constexpr auto value = construct<clauf::if_stmt>;
 };
@@ -1180,8 +1232,8 @@ struct while_stmt
     };
 
     static constexpr auto rule
-        = dsl::position(dsl::p<prefix>)
-          >> dsl::parenthesized(dsl::p<expr>) + dsl::p<secondary_block<scope::local_loop>>;
+        = dsl::position(dsl::p<prefix>) >> dsl::parenthesized(dsl::p<expr_as_rvalue>)
+                                               + dsl::p<secondary_block<scope::local_loop>>;
     static constexpr auto value = construct<clauf::while_stmt>;
 };
 

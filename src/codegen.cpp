@@ -257,6 +257,14 @@ lauf_asm_type codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::exp
                     return;
                 }
             }
+            else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
+            {
+                // Push the address of the function onto the stack.
+                auto fn = ctx.functions.lookup(fn_decl->definition());
+                CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
+                lauf_asm_inst_function_addr(b, *fn);
+                return;
+            }
 
             CLAUF_UNREACHABLE("we don't support anything else yet");
         },
@@ -320,48 +328,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                 break;
             }
         },
-        [&](const clauf::identifier_expr* expr) {
-            if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
-            {
-                auto ty = codegen_type(var_decl->type());
-                if (auto local_var = ctx.local_vars.lookup(var_decl))
-                {
-                    // Push the value of local_var onto the stack.
-                    lauf_asm_inst_local_addr(b, *local_var);
-                    lauf_asm_inst_load_field(b, ty, 0);
-                    return;
-                }
-                else if (auto global_var = ctx.globals.lookup(var_decl->definition()))
-                {
-                    // Push the value of global_var onto the stack.
-                    lauf_asm_inst_global_addr(b, *global_var);
-                    lauf_asm_inst_load_field(b, ty, 0);
-                    return;
-                }
-            }
-            else if (auto param_decl
-                     = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
-            {
-                auto ty = codegen_type(param_decl->type());
-                if (auto local_var = ctx.local_vars.lookup(param_decl))
-                {
-                    // Push the value of the parameter onto the stack.
-                    lauf_asm_inst_local_addr(b, *local_var);
-                    lauf_asm_inst_load_field(b, ty, 0);
-                    return;
-                }
-            }
-            else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
-            {
-                // Push the address of the function onto the stack.
-                auto fn = ctx.functions.lookup(fn_decl->definition());
-                CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
-                lauf_asm_inst_function_addr(b, *fn);
-                return;
-            }
-
-            CLAUF_UNREACHABLE("currently nothing else supported");
-        },
+        [&](const clauf::identifier_expr* expr) { codegen_lvalue(ctx, b, expr); },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::function_call_expr* expr) {
             // Push each argument onto the stack.
             for (auto argument : expr->arguments())
@@ -455,6 +422,16 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                 CLAUF_UNREACHABLE("no other conversion is allowed");
             }
         },
+        [&](dryad::traverse_event_exit, const clauf::lvalue_conversion_expr* expr) {
+            // At this point, the address of the lvalue has been pushed onto the stack.
+            // We need to load it if it's an object (if it's a function, it's already the value).
+            if (clauf::is_complete_object_type(expr->type()))
+            {
+                // Load the value stored at that point.
+                auto type = codegen_type(expr->type());
+                lauf_asm_inst_load_field(b, type, 0);
+            }
+        },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
             // At this point, one value has been pushed onto the stack.
             switch (expr->op())
@@ -480,6 +457,12 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
             case clauf::unary_op::pre_inc:
             case clauf::unary_op::pre_dec: {
+                auto type = codegen_type(expr->type());
+
+                // Because its an lvalue, the address is on the stack.
+                // Do a load to get the value.
+                lauf_asm_inst_load_field(b, type, 0);
+
                 // Add/subtract one to the current value.
                 lauf_asm_inst_uint(b, 1);
                 call_arithmetic_builtin(b,
@@ -490,7 +473,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
                 // Save a copy into the lvalue.
                 lauf_asm_inst_pick(b, 0);
-                auto type = codegen_lvalue(ctx, b, expr->child());
+                codegen_lvalue(ctx, b, expr->child());
                 lauf_asm_inst_store_field(b, type, 0);
 
                 // At this point, the new value is on the stack.
@@ -499,6 +482,12 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
             case clauf::unary_op::post_inc:
             case clauf::unary_op::post_dec: {
+                auto type = codegen_type(expr->type());
+
+                // Because its an lvalue, the address is on the stack.
+                // Do a load to get the value.
+                lauf_asm_inst_load_field(b, type, 0);
+
                 // We duplicate the old value as we want to evaluate that.
                 lauf_asm_inst_pick(b, 0);
 
@@ -511,7 +500,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                                         expr);
 
                 // Store the new value in the lvalue, this removes it from the stack.
-                auto type = codegen_lvalue(ctx, b, expr->child());
+                codegen_lvalue(ctx, b, expr->child());
                 lauf_asm_inst_store_field(b, type, 0);
 
                 // At this point, the old value is on the stack.
@@ -525,8 +514,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                 break;
             case clauf::unary_op::deref:
                 // The address is on top of the stack.
-                // Load its value.
-                lauf_asm_inst_load_field(b, codegen_type(expr->type()), 0);
+                // No need to do anything, lvalue conversion dereferences it.
                 break;
             }
         },
@@ -674,7 +662,14 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             // This might involve an arithmetic operation.
             if (expr->op() != clauf::assignment_op::none)
             {
+                CLAUF_ASSERT(clauf::is_lvalue(expr->left()), "lhs of assignment should be lvalue");
+                // Evaluating the lvalue gets the address, not the value, since we're lacking an
+                // lvalue conversion expression.
                 visitor(expr->left());
+                // Manually do that here.
+                auto type = codegen_type(expr->left()->type());
+                lauf_asm_inst_load_field(b, type, 0);
+
                 visitor(expr->right());
                 call_arithmetic_builtin(b, expr->op(), expr);
             }
