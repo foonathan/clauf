@@ -236,16 +236,14 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
 void                       codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr);
 std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e);
 
-// Evalutes the expression as an lvalue and returns its type.
-lauf_asm_type codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
+// Evalutes the expression as an lvalue.
+void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 {
-    auto type = lauf_asm_type_value;
     dryad::visit_node_all(
         expr,
         [&](const clauf::identifier_expr* expr) {
             if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
             {
-                type = codegen_type(var_decl->type());
                 if (auto local_var = ctx.local_vars.lookup(var_decl))
                 {
                     // Push the value of local_var onto the stack.
@@ -262,7 +260,6 @@ lauf_asm_type codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::exp
             else if (auto param_decl
                      = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
             {
-                type = codegen_type(param_decl->type());
                 if (auto local_var = ctx.local_vars.lookup(param_decl))
                 {
                     // Push the address of the parameter onto the stack.
@@ -285,7 +282,6 @@ lauf_asm_type codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::exp
             // To evaluate a pointer as an lvalue, we don't actually want to dereference it.
             codegen_expr(ctx, b, expr->child());
         });
-    return type;
 }
 
 void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
@@ -435,10 +431,12 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                 CLAUF_UNREACHABLE("no other conversion is allowed");
             }
         },
-        [&](dryad::traverse_event_exit, const clauf::lvalue_conversion_expr* expr) {
+        [&](dryad::traverse_event_exit, const clauf::decay_expr* expr) {
             // At this point, the address of the lvalue has been pushed onto the stack.
-            // We need to load it if it's an object (if it's a function, it's already the value).
-            if (clauf::is_complete_object_type(expr->type()))
+            // We need to load it if it's an object;
+            // if it's a function, it's already the value,
+            // if it's an array, it's decaying to the address.
+            if (!expr->is_array_decay_conversion() && clauf::is_complete_object_type(expr->type()))
             {
                 // Load the value stored at that point.
                 auto type = codegen_type(expr->type());
@@ -700,9 +698,9 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             }
 
             // Push the address of the lvalue onto the stack.
-            auto type = codegen_lvalue(ctx, b, expr->left());
+            codegen_lvalue(ctx, b, expr->left());
             // Store the value into address.
-            lauf_asm_inst_store_field(b, type, 0);
+            lauf_asm_inst_store_field(b, codegen_type(expr->left()->type()), 0);
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);

@@ -111,13 +111,30 @@ void check_inside_loop(compiler_state& state, clauf::location loc)
     }
 }
 
+// If the expression has array type, convert it to a pointer to the first element.
+clauf::expr* do_array_decay(compiler_state& state, clauf::location loc, clauf::expr* expr)
+{
+    if (auto array_ty = dryad::node_try_cast<clauf::array_type>(expr->type()))
+    {
+        auto pointer_ty = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
+            return creator.create<clauf::pointer_type>(
+                clauf::clone(creator, array_ty->element_type()));
+        });
+        return state.ast.create<clauf::decay_expr>(loc, pointer_ty, expr);
+    }
+
+    return expr;
+}
+
 // If the expression is an lvalue, creates an lvalue conversion.
 clauf::expr* do_lvalue_conversion(compiler_state& state, clauf::location loc, clauf::expr* expr)
 {
-    if (!clauf::is_lvalue(expr))
-        return expr;
+    expr = do_array_decay(state, loc, expr);
 
-    return state.ast.create<clauf::lvalue_conversion_expr>(loc, expr->type(), expr);
+    if (clauf::is_lvalue(expr))
+        return state.ast.create<clauf::decay_expr>(loc, expr->type(), expr);
+    else
+        return expr;
 }
 
 // Attempts to convert the value expression to target_type by creating a cast_expr or raising an
@@ -749,7 +766,7 @@ struct expr : lexy::expression_production
             case clauf::unary_op::address:
                 return clauf::is_lvalue_with_address(child);
             case clauf::unary_op::deref:
-                return clauf::is_pointer(child->type());
+                return clauf::is_pointer(child->type()) || clauf::is_array(child->type());
             }
         }();
         if (!is_valid_type)
@@ -786,6 +803,7 @@ struct expr : lexy::expression_production
         }
         else
         {
+            child = do_array_decay(state, op.loc, child);
             if (op != clauf::unary_op::post_inc && op != clauf::unary_op::pre_inc
                 && op != clauf::unary_op::post_dec && op != clauf::unary_op::pre_dec)
                 child = do_lvalue_conversion(state, op.loc, child);
@@ -903,9 +921,10 @@ struct expr : lexy::expression_production
         // This is called for ptr[index]
         [](compiler_state& state, clauf::expr* ptr, op_tag<> op, clauf::expr* index) {
             // Normalize, so pointer is always the left argument.
-            if (!clauf::is_pointer(ptr->type()))
+            if (!clauf::is_pointer(ptr->type()) && !clauf::is_array(ptr->type()))
                 std::swap(ptr, index);
 
+            ptr   = do_array_decay(state, op.loc, ptr);
             index = do_lvalue_conversion(state, op.loc, index);
 
             if (!clauf::is_pointer_to_complete_object_type(ptr->type())
@@ -1066,6 +1085,7 @@ struct expr : lexy::expression_production
         },
         [](compiler_state& state, clauf::expr* left, op_tag<clauf::assignment_op> op,
            clauf::expr* right) {
+            left  = do_array_decay(state, op.loc, left);
             right = do_lvalue_conversion(state, op.loc, right);
 
             if (!clauf::is_modifiable_lvalue(left))

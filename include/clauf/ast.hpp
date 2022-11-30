@@ -216,6 +216,8 @@ bool is_arithmetic(const type* ty);
 bool is_pointer(const type* ty);
 bool is_scalar(const type* ty);
 
+bool is_array(const type* ty);
+
 bool is_complete_object_type(const type* ty);
 bool is_pointer_to_complete_object_type(const type* ty);
 
@@ -240,7 +242,7 @@ enum class node_kind
     identifier_expr,
     function_call_expr,
     cast_expr,
-    lvalue_conversion_expr,
+    decay_expr,
     unary_expr,
     arithmetic_expr,
     comparison_expr,
@@ -484,18 +486,23 @@ public:
     DRYAD_CHILD_NODE_GETTER(expr, child, nullptr)
 };
 
-/// An lvalue conversion that converts an lvalue expression into its value.
-class lvalue_conversion_expr : public dryad::basic_node<node_kind::lvalue_conversion_expr, expr>
+/// An lvalue conversion that converts an lvalue expression into its value,
+/// or an array into a pointer to its first element.
+class decay_expr : public dryad::basic_node<node_kind::decay_expr, expr>
 {
 public:
-    explicit lvalue_conversion_expr(dryad::node_ctor ctor, const clauf::type* target_type,
-                                    clauf::expr* child)
+    explicit decay_expr(dryad::node_ctor ctor, const clauf::type* target_type, clauf::expr* child)
     : node_base(ctor, target_type)
     {
         insert_child_after(nullptr, child);
     }
 
     DRYAD_CHILD_NODE_GETTER(expr, child, nullptr)
+
+    bool is_array_decay_conversion() const
+    {
+        return !clauf::is_same(this->type(), child()->type());
+    }
 };
 
 enum class unary_op : std::uint16_t
@@ -1151,6 +1158,7 @@ struct ast
     }
 };
 
+void dump_type(const clauf::type* ty);
 void dump_ast(const ast& ast);
 } // namespace clauf
 

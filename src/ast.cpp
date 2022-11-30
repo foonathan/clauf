@@ -160,6 +160,12 @@ bool clauf::is_scalar(const type* ty)
     return clauf::is_arithmetic(ty) || clauf::is_pointer(ty);
 }
 
+bool clauf::is_array(const type* ty_)
+{
+    auto ty = clauf::unqualified_type_of(ty_);
+    return dryad::node_has_kind<clauf::array_type>(ty);
+}
+
 bool clauf::is_complete_object_type(const type* ty_)
 {
     auto ty = clauf::unqualified_type_of(ty_);
@@ -501,8 +507,8 @@ const char* to_string(clauf::node_kind kind)
         return "identifier expr";
     case clauf::node_kind::function_call_expr:
         return "function call expr";
-    case clauf::node_kind::lvalue_conversion_expr:
-        return "lvalue conversion expr";
+    case clauf::node_kind::decay_expr:
+        return "decay expr";
     case clauf::node_kind::cast_expr:
         return "cast expr";
     case clauf::node_kind::unary_expr:
@@ -542,7 +548,9 @@ const char* to_string(clauf::node_kind kind)
     }
 }
 
-void dump_type(const clauf::type* ty)
+} // namespace
+
+void clauf::dump_type(const clauf::type* ty)
 {
     dryad::visit_tree(
         ty,
@@ -601,7 +609,6 @@ void dump_type(const clauf::type* ty)
                 std::printf("restrict ");
         });
 }
-} // namespace
 
 void clauf::dump_ast(const ast& ast)
 {
@@ -659,7 +666,7 @@ void clauf::dump_ast(const ast& ast)
                 dump_type(expr->type());
             },
             [&](const cast_expr* expr) { dump_type(expr->type()); },
-            [&](const lvalue_conversion_expr* expr) { dump_type(expr->type()); },
+            [&](const decay_expr* expr) { dump_type(expr->type()); },
             [&](const unary_expr* expr) {
                 switch (expr->op())
                 {
