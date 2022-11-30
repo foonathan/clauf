@@ -949,11 +949,9 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     return fn;
 }
 
-std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
+void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
 {
-    auto                       type = codegen_type(e->type());
-    std::vector<unsigned char> result;
-    result.resize(type.layout.size);
+    auto type = codegen_type(e->type());
 
     // We create a chunk that will hold the bytecode for our expression.
     auto chunk = lauf_asm_create_chunk(ctx.mod);
@@ -976,7 +974,7 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
 
         lauf_asm_native result_native_global;
         lauf_asm_define_native_global(&result_native_global, &program, ctx.consteval_result_global,
-                                      result.data(), result.size());
+                                      data, type.layout.size);
 
         struct ph_data_t
         {
@@ -999,18 +997,27 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
 
         lauf_vm_set_panic_handler(ctx.vm, old_ph);
     }
+}
 
+std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
+{
+    auto                       type = codegen_type(e->type());
+    std::vector<unsigned char> result;
+    result.resize(type.layout.size);
+    constant_eval_impl(result.data(), ctx, e);
     return result;
 }
 } // namespace
 
 std::size_t clauf::constant_eval_integer_expr(lauf_vm* vm, const ast& ast, const expr* expr)
 {
+    if (auto integer = dryad::node_try_cast<clauf::integer_constant_expr>(expr))
+        return std::size_t(integer->value());
+
     context ctx(ast, vm);
-    auto    data = constant_eval(ctx, expr);
 
     lauf_runtime_value result;
-    std::memcpy(&result, data.data(), data.size());
+    constant_eval_impl(&result, ctx, expr);
     return std::size_t(result.as_uint);
 }
 
