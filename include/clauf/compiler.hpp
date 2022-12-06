@@ -4,6 +4,8 @@
 #ifndef CLAUF_COMPILER_HPP_INCLUDED
 #define CLAUF_COMPILER_HPP_INCLUDED
 
+#include <clauf/ast.hpp>
+#include <lauf/asm/module.h>
 #include <lexy/input/buffer.hpp>
 #include <optional>
 
@@ -11,12 +13,15 @@ struct lauf_vm;
 
 namespace clauf
 {
-struct ast;
-class file;
+struct compilation_result
+{
+    clauf::ast       ast;
+    lauf_asm_module* mod;
+};
 
 /// If input is well-formed C (including name lookup and type checking), return its AST.
 /// Otherwise, log error and return nothing.
-std::optional<ast> compile(lauf_vm* vm, file&& input);
+std::optional<compilation_result> compile(lauf_vm* vm, file&& input);
 } // namespace clauf
 
 #endif // CLAUF_COMPILER_HPP_INCLUDED

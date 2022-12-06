@@ -278,7 +278,8 @@ enum class node_kind
 using node = dryad::node<node_kind>;
 
 struct ast_symbol_id;
-using ast_symbol = dryad::symbol<ast_symbol_id, std::uint32_t>;
+using ast_symbol          = dryad::symbol<ast_symbol_id, std::uint32_t>;
+using ast_symbol_interner = dryad::symbol_interner<ast_symbol_id, char, std::uint32_t>;
 
 class decl;
 using decl_list = dryad::unlinked_node_list<decl>;
@@ -1147,10 +1148,10 @@ public:
 /// The entire AST of a source file.
 struct ast
 {
-    file                                                       input;
-    dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
-    dryad::tree<translation_unit>                              tree;
-    type_forest                                                types;
+    file                          input;
+    ast_symbol_interner           symbols;
+    dryad::tree<translation_unit> tree;
+    type_forest                   types;
 
     explicit ast(file&& input) : input(LEXY_MOV(input)) {}
 

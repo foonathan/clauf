@@ -24,45 +24,9 @@
 #include <clauf/ast.hpp>
 #include <clauf/diagnostic.hpp>
 
-//=== codegen ===//
+//=== helper functions ===//
 namespace
 {
-struct context
-{
-    const clauf::ast*                                               ast;
-    lauf_vm*                                                        vm;
-    lauf_asm_module*                                                mod;
-    lauf_asm_global*                                                consteval_result_global;
-    dryad::node_map<const clauf::variable_decl, lauf_asm_global*>   globals;
-    dryad::node_map<const clauf::decl, lauf_asm_local*>             local_vars;
-    dryad::node_map<const clauf::function_decl, lauf_asm_function*> functions;
-
-    // Used for codegen of a function.
-    lauf_asm_builder* fn_builder;
-    // Used for codegen of a chunk during constant evaluation.
-    lauf_asm_builder* chunk_builder;
-
-    context(const clauf::ast& ast, lauf_vm* vm)
-    : ast(&ast), vm(vm), mod(lauf_asm_create_module("main module")),
-      consteval_result_global(lauf_asm_add_global(mod, LAUF_ASM_GLOBAL_READ_WRITE)),
-      fn_builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
-      chunk_builder(lauf_asm_create_builder(lauf_asm_default_build_options))
-    {
-        lauf_asm_set_module_debug_path(mod, ast.input.path());
-        lauf_asm_set_global_debug_name(mod, consteval_result_global,
-                                       "constexpr_initialization_result");
-    }
-
-    context(const context&)            = delete;
-    context& operator=(const context&) = delete;
-
-    ~context()
-    {
-        lauf_asm_destroy_builder(fn_builder);
-        lauf_asm_destroy_builder(chunk_builder);
-    }
-};
-
 lauf_asm_type codegen_type(const clauf::type* ty)
 {
     return dryad::visit_node_all(
@@ -233,12 +197,25 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
     }
 }
 
-void                       codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr);
-std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e);
+struct context
+{
+    lauf_vm*                                                               vm;
+    const clauf::file*                                                     input;
+    lauf_asm_module*                                                       mod;
+    lauf_asm_global*                                                       consteval_result_global;
+    lauf_asm_builder*                                                      builder;
+    const dryad::node_map<const clauf::variable_decl, lauf_asm_global*>*   globals;
+    const dryad::node_map<const clauf::function_decl, lauf_asm_function*>* functions;
+
+    dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
+};
+
+void codegen_expr(context& ctx, const clauf::expr* expr);
 
 // Evalutes the expression as an lvalue.
-void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
+void codegen_lvalue(context& ctx, const clauf::expr* expr)
 {
+    auto b = ctx.builder;
     dryad::visit_node_all(
         expr,
         [&](const clauf::identifier_expr* expr) {
@@ -250,7 +227,7 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                     lauf_asm_inst_local_addr(b, *local_var);
                     return;
                 }
-                else if (auto global_var = ctx.globals.lookup(var_decl->definition()))
+                else if (auto global_var = ctx.globals->lookup(var_decl->definition()))
                 {
                     // Push the value of global_var onto the stack.
                     lauf_asm_inst_global_addr(b, *global_var);
@@ -270,7 +247,7 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
             {
                 // Push the address of the function onto the stack.
-                auto fn = ctx.functions.lookup(fn_decl->definition());
+                auto fn = ctx.functions->lookup(fn_decl->definition());
                 CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
                 lauf_asm_inst_function_addr(b, *fn);
                 return;
@@ -280,12 +257,14 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
         },
         [&](const clauf::unary_expr* expr) {
             // To evaluate a pointer as an lvalue, we don't actually want to dereference it.
-            codegen_expr(ctx, b, expr->child());
+            codegen_expr(ctx, expr->child());
         });
 }
 
-void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
+// Evalutes the expression as an rvalue.
+void codegen_expr(context& ctx, const clauf::expr* expr)
 {
+    auto b = ctx.builder;
     dryad::visit_tree(
         expr,
         [&](const clauf::nullptr_constant_expr*) {
@@ -337,7 +316,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                 break;
             }
         },
-        [&](const clauf::identifier_expr* expr) { codegen_lvalue(ctx, b, expr); },
+        [&](const clauf::identifier_expr* expr) { codegen_lvalue(ctx, expr); },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::function_call_expr* expr) {
             // Push each argument onto the stack.
             for (auto argument : expr->arguments())
@@ -484,7 +463,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
                 // Save a copy into the lvalue.
                 lauf_asm_inst_pick(b, 0);
-                codegen_lvalue(ctx, b, expr->child());
+                codegen_lvalue(ctx, expr->child());
                 lauf_asm_inst_store_field(b, type, 0);
 
                 // At this point, the new value is on the stack.
@@ -511,7 +490,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                                         expr);
 
                 // Store the new value in the lvalue, this removes it from the stack.
-                codegen_lvalue(ctx, b, expr->child());
+                codegen_lvalue(ctx, expr->child());
                 lauf_asm_inst_store_field(b, type, 0);
 
                 // At this point, the old value is on the stack.
@@ -521,7 +500,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             case clauf::unary_op::address:
                 // Remove the value of the child expression and push its address instead.
                 lauf_asm_inst_pop(b, 0);
-                codegen_lvalue(ctx, b, expr->child());
+                codegen_lvalue(ctx, expr->child());
                 break;
             case clauf::unary_op::deref:
                 // The address is on top of the stack.
@@ -698,7 +677,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             }
 
             // Push the address of the lvalue onto the stack.
-            codegen_lvalue(ctx, b, expr->left());
+            codegen_lvalue(ctx, expr->left());
             // Store the value into address.
             lauf_asm_inst_store_field(b, codegen_type(expr->left()->type()), 0);
         },
@@ -733,21 +712,68 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
         });
 }
 
-lauf_asm_global* codegen_global_header(context& ctx, const clauf::variable_decl* decl)
+void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
 {
-    auto qualifiers = clauf::type_qualifiers_of(decl->type());
-    auto is_const   = (qualifiers & clauf::qualified_type::const_) != 0;
+    auto type = codegen_type(e->type());
 
-    auto global = lauf_asm_add_global(ctx.mod, is_const ? LAUF_ASM_GLOBAL_READ_ONLY
-                                                        : LAUF_ASM_GLOBAL_READ_WRITE);
-    lauf_asm_set_global_debug_name(ctx.mod, global, decl->name().c_str(ctx.ast->symbols));
-    ctx.globals.insert(decl, global);
-    return global;
+    // We create a chunk that will hold the bytecode for our expression.
+    auto chunk = lauf_asm_create_chunk(ctx.mod);
+    {
+        auto b = ctx.builder;
+        lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
+
+        // Store the result of the expression in the native global.
+        codegen_expr(ctx, e);
+        lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
+        lauf_asm_inst_store_field(b, type, 0);
+
+        lauf_asm_inst_return(b);
+        lauf_asm_build_finish(b);
+    }
+
+    // We then execute that chunk.
+    {
+        auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
+
+        lauf_asm_native result_native_global;
+        lauf_asm_define_native_global(&result_native_global, &program, ctx.consteval_result_global,
+                                      data, type.layout.size);
+
+        struct ph_data_t
+        {
+            const context&     ctx;
+            const clauf::expr* e;
+        } ph_data = {ctx, e};
+        auto ph   = [](void* data, lauf_runtime_process*, const char* msg) {
+            auto [ctx, e] = *static_cast<ph_data_t*>(data);
+            clauf::diagnostic_logger logger(*ctx.input);
+            logger.log(clauf::diagnostic_kind::error, "panic during constant evaluation '%s'", msg)
+                .annotation(clauf::annotation_kind::primary, ctx.input->location_of(e),
+                              "while evaluating expr here")
+                .finish();
+        };
+        auto old_ph = lauf_vm_set_panic_handler(ctx.vm, {&ph_data, ph});
+
+        auto success = lauf_vm_execute_oneshot(ctx.vm, program, nullptr, nullptr);
+        if (!success)
+            throw std::runtime_error("constant evaluation panic");
+
+        lauf_vm_set_panic_handler(ctx.vm, old_ph);
+    }
+}
+
+std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
+{
+    auto                       type = codegen_type(e->type());
+    std::vector<unsigned char> result;
+    result.resize(type.layout.size);
+    constant_eval_impl(result.data(), ctx, e);
+    return result;
 }
 
 lauf_asm_global* codegen_global_init(context& ctx, const clauf::variable_decl* decl)
 {
-    auto global = *ctx.globals.lookup(decl);
+    auto global = *ctx.globals->lookup(decl);
     auto layout = codegen_layout(decl->type());
 
     if (decl->has_initializer())
@@ -763,32 +789,16 @@ lauf_asm_global* codegen_global_init(context& ctx, const clauf::variable_decl* d
     return global;
 }
 
-lauf_asm_function* codegen_function_header(context& ctx, const clauf::function_decl* decl)
-{
-    auto parameter_count = std::distance(decl->parameters().begin(), decl->parameters().end());
-    auto return_count    = clauf::is_void(decl->type()->return_type()) ? 0 : 1;
-
-    auto name = decl->name().c_str(ctx.ast->symbols);
-    auto fn   = lauf_asm_add_function(ctx.mod, name,
-                                      {static_cast<std::uint8_t>(parameter_count),
-                                       static_cast<std::uint8_t>(return_count)});
-    ctx.functions.insert(decl, fn);
-    if (decl->linkage() == clauf::linkage::external)
-        lauf_asm_export_function(fn);
-
-    return fn;
-}
-
 lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_decl* decl)
 {
-    auto fn        = *ctx.functions.lookup(decl);
+    auto fn        = *ctx.functions->lookup(decl);
     ctx.local_vars = {};
 
     std::vector<const clauf::parameter_decl*> params;
     for (auto param : decl->parameters())
         params.push_back(param);
 
-    auto b = ctx.fn_builder;
+    auto b = ctx.builder;
     lauf_asm_build(b, ctx.mod, fn);
 
     // We create variables for all parameters and store the value into them.
@@ -811,12 +821,12 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     dryad::visit_tree(
         decl->body(),
         //=== statements ===//
-        [&, anchor = lexy::input_location_anchor(ctx.ast->input.buffer())] //
+        [&, anchor = lexy::input_location_anchor(ctx.input->buffer())] //
         (dryad::traverse_event_enter, const clauf::stmt* stmt) mutable {
             // Generate debug location for all instructions generated by a statement.
-            auto location = ctx.ast->input.location_of(stmt);
+            auto location = ctx.input->location_of(stmt);
             auto expanded_location
-                = lexy::get_input_location(ctx.ast->input.buffer(), location.begin, anchor);
+                = lexy::get_input_location(ctx.input->buffer(), location.begin, anchor);
 
             lauf_asm_build_debug_location(b, {std::uint16_t(expanded_location.line_nr()),
                                               std::uint16_t(expanded_location.column_nr()), false});
@@ -936,7 +946,7 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
         },
         //=== expression ===//
         [&](dryad::child_visitor<clauf::node_kind>, const clauf::expr* expr) {
-            codegen_expr(ctx, b, expr);
+            codegen_expr(ctx, expr);
         });
 
     lauf_asm_build_debug_location(b, {0, 0, true});
@@ -948,95 +958,66 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     lauf_asm_build_finish(b);
     return fn;
 }
-
-void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
-{
-    auto type = codegen_type(e->type());
-
-    // We create a chunk that will hold the bytecode for our expression.
-    auto chunk = lauf_asm_create_chunk(ctx.mod);
-    {
-        auto b = ctx.chunk_builder;
-        lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
-
-        // Store the result of the expression in the native global.
-        codegen_expr(ctx, b, e);
-        lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
-        lauf_asm_inst_store_field(b, type, 0);
-
-        lauf_asm_inst_return(b);
-        lauf_asm_build_finish(b);
-    }
-
-    // We then execute that chunk.
-    {
-        auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
-
-        lauf_asm_native result_native_global;
-        lauf_asm_define_native_global(&result_native_global, &program, ctx.consteval_result_global,
-                                      data, type.layout.size);
-
-        struct ph_data_t
-        {
-            const context&     ctx;
-            const clauf::expr* e;
-        } ph_data = {ctx, e};
-        auto ph   = [](void* data, lauf_runtime_process*, const char* msg) {
-            auto [ctx, e] = *static_cast<ph_data_t*>(data);
-            clauf::diagnostic_logger logger(ctx.ast->input);
-            logger.log(clauf::diagnostic_kind::error, "panic during constant evaluation '%s'", msg)
-                .annotation(clauf::annotation_kind::primary, ctx.ast->input.location_of(e),
-                              "while evaluating expr here")
-                .finish();
-        };
-        auto old_ph = lauf_vm_set_panic_handler(ctx.vm, {&ph_data, ph});
-
-        auto success = lauf_vm_execute_oneshot(ctx.vm, program, nullptr, nullptr);
-        if (!success)
-            throw std::runtime_error("constant evaluation panic");
-
-        lauf_vm_set_panic_handler(ctx.vm, old_ph);
-    }
-}
-
-std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
-{
-    auto                       type = codegen_type(e->type());
-    std::vector<unsigned char> result;
-    result.resize(type.layout.size);
-    constant_eval_impl(result.data(), ctx, e);
-    return result;
-}
 } // namespace
 
-std::size_t clauf::constant_eval_integer_expr(lauf_vm* vm, const ast& ast, const expr* expr)
+//=== codegen ===//
+clauf::codegen::codegen(lauf_vm* vm, const file& f, const ast_symbol_interner& sym)
+: _vm(vm), _file(&f), _symbols(&sym), _mod(lauf_asm_create_module("main module")),
+  _builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
+  _consteval_result_global(lauf_asm_add_global(_mod, LAUF_ASM_GLOBAL_READ_WRITE))
+{
+    lauf_asm_set_module_debug_path(_mod, f.path());
+    lauf_asm_set_global_debug_name(_mod, _consteval_result_global,
+                                   "constexpr_initialization_result");
+}
+
+void clauf::codegen::declare_global(const variable_decl* decl)
+{
+    if (!decl->is_definition())
+        return;
+
+    auto qualifiers = clauf::type_qualifiers_of(decl->type());
+    auto is_const   = (qualifiers & clauf::qualified_type::const_) != 0;
+
+    auto global = lauf_asm_add_global(_mod, is_const ? LAUF_ASM_GLOBAL_READ_ONLY
+                                                     : LAUF_ASM_GLOBAL_READ_WRITE);
+    lauf_asm_set_global_debug_name(_mod, global, decl->name().c_str(*_symbols));
+    _globals.insert(decl, global);
+}
+
+void clauf::codegen::declare_function(const function_decl* decl)
+{
+    if (!decl->is_definition())
+        return;
+
+    auto parameter_count = std::distance(decl->parameters().begin(), decl->parameters().end());
+    auto return_count    = clauf::is_void(decl->type()->return_type()) ? 0 : 1;
+
+    auto name = decl->name().c_str(*_symbols);
+    auto fn   = lauf_asm_add_function(_mod, name,
+                                      {static_cast<std::uint8_t>(parameter_count),
+                                       static_cast<std::uint8_t>(return_count)});
+    _functions.insert(decl, fn);
+    if (decl->linkage() == clauf::linkage::external)
+        lauf_asm_export_function(fn);
+}
+
+std::size_t clauf::codegen::constant_eval_integer_expr(const expr* expr)
 {
     if (auto integer = dryad::node_try_cast<clauf::integer_constant_expr>(expr))
         return std::size_t(integer->value());
 
-    context ctx(ast, vm);
+    context ctx{_vm, _file, _mod, _consteval_result_global, _builder, &_globals, &_functions, {}};
 
     lauf_runtime_value result;
     constant_eval_impl(&result, ctx, expr);
     return std::size_t(result.as_uint);
 }
 
-lauf_asm_module* clauf::codegen(lauf_vm* vm, const ast& ast)
+lauf_asm_module* clauf::codegen::finish(const ast& ast) &&
 try
 {
-    context ctx(ast, vm);
-
-    // Add lauf forward declarations for all definitions.
-    dryad::visit_tree(
-        ast.tree,
-        [&](const variable_decl* decl) {
-            if (decl->storage_duration() == storage_duration::static_ && decl->is_definition())
-                codegen_global_header(ctx, decl);
-        },
-        [&](const function_decl* decl) {
-            if (decl->is_definition())
-                codegen_function_header(ctx, decl);
-        });
+    context ctx{_vm, _file, _mod, _consteval_result_global, _builder, &_globals, &_functions, {}};
 
     // Generate body for all lauf declarations.
     dryad::visit_tree(

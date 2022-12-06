@@ -4,18 +4,46 @@
 #ifndef CLAUF_CODEGEN_HPP_INCLUDED
 #define CLAUF_CODEGEN_HPP_INCLUDED
 
+#include <clauf/ast.hpp>
+#include <lauf/asm/builder.h>
 #include <lauf/asm/module.h>
 #include <lauf/vm.h>
 #include <vector>
 
 namespace clauf
 {
-struct ast;
-class expr;
+class codegen
+{
+public:
+    explicit codegen(lauf_vm* vm, const file& f, const ast_symbol_interner& sym);
 
-std::size_t constant_eval_integer_expr(lauf_vm* vm, const ast& ast, const expr* expr);
+    codegen(const codegen&)            = delete;
+    codegen& operator=(const codegen&) = delete;
 
-lauf_asm_module* codegen(lauf_vm* vm, const ast& ast);
+    ~codegen()
+    {
+        lauf_asm_destroy_builder(_builder);
+    }
+
+    void declare_global(const variable_decl* decl);
+    void declare_function(const function_decl* decl);
+
+    std::size_t constant_eval_integer_expr(const expr* expr);
+
+    lauf_asm_module* finish(const ast& ast) &&;
+
+private:
+    lauf_vm*                   _vm;
+    const file*                _file;
+    const ast_symbol_interner* _symbols;
+
+    lauf_asm_module*  _mod;
+    lauf_asm_builder* _builder;
+    lauf_asm_global*  _consteval_result_global;
+
+    dryad::node_map<const clauf::variable_decl, lauf_asm_global*>   _globals;
+    dryad::node_map<const clauf::function_decl, lauf_asm_function*> _functions;
+};
 } // namespace clauf
 
 #endif // CLAUF_CODEGEN_HPP_INCLUDED

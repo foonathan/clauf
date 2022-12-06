@@ -38,20 +38,19 @@ int main(const options& opts)
         return 1;
     }
 
-    auto vm  = lauf_create_vm(lauf_default_vm_options);
-    auto ast = compile(vm, clauf::file(opts.input.c_str(), LEXY_MOV(file).buffer()));
-    if (!ast)
+    auto vm     = lauf_create_vm(lauf_default_vm_options);
+    auto result = compile(vm, clauf::file(opts.input.c_str(), LEXY_MOV(file).buffer()));
+    if (!result)
         return 1;
 
     if (opts.dump_ast)
     {
         std::puts("=== AST ===");
-        dump_ast(*ast);
+        dump_ast(result->ast);
         std::putchar('\n');
     }
 
-    auto mod = codegen(vm, *ast);
-    if (mod != nullptr)
+    if (auto mod = result->mod)
     {
         if (opts.dump_bytecode)
         {

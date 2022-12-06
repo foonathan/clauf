@@ -40,9 +40,9 @@ struct scope
 struct compiler_state
 {
     clauf::diagnostic_logger       logger;
-    lauf_vm*                       vm;
     clauf::ast                     ast;
     dryad::tree<clauf::declarator> decl_tree;
+    clauf::codegen                 codegen;
 
     scope                 global_scope;
     scope*                current_scope;
@@ -51,8 +51,8 @@ struct compiler_state
     int symbol_generator_count;
 
     compiler_state(lauf_vm* vm, clauf::file&& input)
-    : logger(input), vm(vm), ast{LEXY_MOV(input)}, global_scope(scope::global, nullptr),
-      current_scope(&global_scope), symbol_generator_count(0)
+    : logger(input), ast{LEXY_MOV(input)}, codegen(vm, ast.input, ast.symbols),
+      global_scope(scope::global, nullptr), current_scope(&global_scope), symbol_generator_count(0)
     {}
 
     clauf::ast_symbol generate_symbol()
@@ -90,6 +90,20 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
                         "second declaration")
             .finish();
         return;
+    }
+}
+
+void codegen_new_decl(compiler_state& state, clauf::decl* decl)
+{
+    // Inform codegen of the new declaration if necessary.
+    if (auto fn = dryad::node_try_cast<clauf::function_decl>(decl))
+    {
+        state.codegen.declare_function(fn);
+    }
+    else if (auto var = dryad::node_try_cast<clauf::variable_decl>(decl))
+    {
+        if (var->storage_duration() == clauf::storage_duration::static_)
+            state.codegen.declare_global(var);
     }
 }
 
@@ -1158,7 +1172,10 @@ struct decl_stmt
         [](compiler_state& state, clauf::location loc, decl_list decls) {
             auto result = state.ast.create<clauf::decl_stmt>(loc, decls);
             for (auto decl : result->declarations())
+            {
                 insert_new_decl(state, decl);
+                codegen_new_decl(state, decl);
+            }
             return result;
         });
 };
@@ -1544,7 +1561,7 @@ struct declarator : lexy::expression_production
         },
         [](compiler_state& state, clauf::declarator* child, postfix_declarator, clauf::expr* expr) {
             dryad::leak_node(expr);
-            auto size = clauf::constant_eval_integer_expr(state.vm, state.ast, expr);
+            auto size = state.codegen.constant_eval_integer_expr(expr);
             return state.decl_tree.create<clauf::array_declarator>(child, size);
         },
         [](compiler_state& state, clauf::declarator* child, postfix_declarator,
@@ -1764,6 +1781,7 @@ struct declaration
                 result.push_back(create_non_init_declaration(state, ty_stor, declarator));
             }
         }
+
         return result;
     });
 };
@@ -1836,13 +1854,18 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             scope local_scope(scope::local, state.current_scope);
             state.current_scope = &local_scope;
             for (auto param : fn_decl->parameters())
+            {
                 insert_new_decl(state, param);
+                codegen_new_decl(state, param);
+            }
 
             auto body = scanner.parse(grammar::block_stmt{});
             if (!body)
                 return lexy::scan_failed;
             fn_decl->make_definition();
             fn_decl->set_body(body.value());
+
+            codegen_new_decl(state, fn_decl);
 
             state.current_scope    = state.current_scope->parent;
             state.current_function = nullptr;
@@ -1857,7 +1880,10 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
 
             auto result = grammar::declaration::value[state](ty_spec.value(), decl_list.value());
             for (auto decl : result)
+            {
                 insert_new_decl(state, decl);
+                codegen_new_decl(state, decl);
+            }
             return result;
         }
     }
@@ -1949,7 +1975,7 @@ bool resolve_forward_declarations(compiler_state& state)
 }
 } // namespace
 
-std::optional<clauf::ast> clauf::compile(lauf_vm* vm, file&& input)
+std::optional<clauf::compilation_result> clauf::compile(lauf_vm* vm, file&& input)
 {
     compiler_state state(vm, LEXY_MOV(input));
     auto result = lexy::parse<clauf::grammar::translation_unit>(state.ast.input.buffer(), state,
@@ -1961,6 +1987,7 @@ std::optional<clauf::ast> clauf::compile(lauf_vm* vm, file&& input)
     if (!resolve_forward_declarations(state))
         return std::nullopt;
 
-    return std::move(state.ast);
+    auto mod = std::move(state.codegen).finish(state.ast);
+    return clauf::compilation_result{std::move(state.ast), mod};
 }
 
