@@ -51,7 +51,7 @@ struct compiler_state
     int symbol_generator_count;
 
     compiler_state(lauf_vm* vm, clauf::file&& input)
-    : ast{LEXY_MOV(input)}, logger(ast.input), codegen(vm, ast.input, ast.symbols),
+    : ast{LEXY_MOV(input)}, logger(ast.input), codegen(vm, logger, ast.input, ast.symbols),
       global_scope(scope::global, nullptr), current_scope(&global_scope), symbol_generator_count(0)
     {}
 

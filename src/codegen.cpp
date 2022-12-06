@@ -200,6 +200,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
 struct context
 {
     lauf_vm*                                                               vm;
+    clauf::diagnostic_logger*                                              logger;
     const clauf::file*                                                     input;
     lauf_asm_module*                                                       mod;
     lauf_asm_chunk*                                                        consteval_chunk;
@@ -747,8 +748,8 @@ void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
         } ph_data = {ctx, e};
         auto ph   = [](void* data, lauf_runtime_process*, const char* msg) {
             auto [ctx, e] = *static_cast<ph_data_t*>(data);
-            clauf::diagnostic_logger logger(*ctx.input);
-            logger.log(clauf::diagnostic_kind::error, "panic during constant evaluation '%s'", msg)
+            ctx.logger
+                ->log(clauf::diagnostic_kind::error, "panic during constant evaluation '%s'", msg)
                 .annotation(clauf::annotation_kind::primary, ctx.input->location_of(e),
                               "while evaluating expr here")
                 .finish();
@@ -959,8 +960,9 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
 } // namespace
 
 //=== codegen ===//
-clauf::codegen::codegen(lauf_vm* vm, const file& f, const ast_symbol_interner& sym)
-: _vm(vm), _file(&f), _symbols(&sym), _mod(lauf_asm_create_module("main module")),
+clauf::codegen::codegen(lauf_vm* vm, diagnostic_logger& logger, const file& f,
+                        const ast_symbol_interner& sym)
+: _vm(vm), _logger(&logger), _file(&f), _symbols(&sym), _mod(lauf_asm_create_module("main module")),
   _builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
   _consteval_chunk(lauf_asm_create_chunk(_mod)),
   _consteval_result_global(lauf_asm_add_global(_mod, LAUF_ASM_GLOBAL_READ_WRITE))
@@ -987,9 +989,10 @@ void clauf::codegen::declare_global(const variable_decl* decl)
     {
         // For an constexpr global, we need to set its value immediately, as it can be accessed
         // during integer constant evaluation.
-        context
-            ctx{_vm,       _file,       _mod, _consteval_chunk, _consteval_result_global, _builder,
-                &_globals, &_functions, {}};
+        context ctx{_vm,      _logger,          _file,
+                    _mod,     _consteval_chunk, _consteval_result_global,
+                    _builder, &_globals,        &_functions,
+                    {}};
         codegen_global_init(ctx, global, decl);
     }
 }
@@ -1012,23 +1015,28 @@ void clauf::codegen::declare_function(const function_decl* decl)
 }
 
 std::size_t clauf::codegen::constant_eval_integer_expr(const expr* expr)
+try
 {
     if (auto integer = dryad::node_try_cast<clauf::integer_constant_expr>(expr))
         return std::size_t(integer->value());
 
-    context ctx{_vm,       _file,       _mod, _consteval_chunk, _consteval_result_global, _builder,
-                &_globals, &_functions, {}};
+    context ctx{_vm,      _logger,   _file,       _mod, _consteval_chunk, _consteval_result_global,
+                _builder, &_globals, &_functions, {}};
 
     lauf_runtime_value result;
     constant_eval_impl(&result, ctx, expr);
     return std::size_t(result.as_uint);
 }
+catch (std::runtime_error&)
+{
+    return 0;
+}
 
 lauf_asm_module* clauf::codegen::finish(const ast& ast) &&
 try
 {
-    context ctx{_vm,       _file,       _mod, _consteval_chunk, _consteval_result_global, _builder,
-                &_globals, &_functions, {}};
+    context ctx{_vm,      _logger,   _file,       _mod, _consteval_chunk, _consteval_result_global,
+                _builder, &_globals, &_functions, {}};
 
     // Generate body for all lauf declarations.
     dryad::visit_tree(

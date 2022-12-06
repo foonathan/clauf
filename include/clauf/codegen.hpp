@@ -12,10 +12,13 @@
 
 namespace clauf
 {
+class diagnostic_logger;
+
 class codegen
 {
 public:
-    explicit codegen(lauf_vm* vm, const file& f, const ast_symbol_interner& sym);
+    explicit codegen(lauf_vm* vm, diagnostic_logger& logger, const file& f,
+                     const ast_symbol_interner& sym);
 
     codegen(const codegen&)            = delete;
     codegen& operator=(const codegen&) = delete;
@@ -34,6 +37,7 @@ public:
 
 private:
     lauf_vm*                   _vm;
+    diagnostic_logger*         _logger;
     const file*                _file;
     const ast_symbol_interner* _symbols;
 
