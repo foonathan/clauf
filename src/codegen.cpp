@@ -771,9 +771,8 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
     return result;
 }
 
-lauf_asm_global* codegen_global_init(context& ctx, const clauf::variable_decl* decl)
+void codegen_global_init(context& ctx, lauf_asm_global* global, const clauf::variable_decl* decl)
 {
-    auto global = *ctx.globals->lookup(decl);
     auto layout = codegen_layout(decl->type());
 
     if (decl->has_initializer())
@@ -785,8 +784,6 @@ lauf_asm_global* codegen_global_init(context& ctx, const clauf::variable_decl* d
     {
         lauf_asm_define_data_global(ctx.mod, global, layout, nullptr);
     }
-
-    return global;
 }
 
 lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_decl* decl)
@@ -983,6 +980,15 @@ void clauf::codegen::declare_global(const variable_decl* decl)
                                                      : LAUF_ASM_GLOBAL_READ_WRITE);
     lauf_asm_set_global_debug_name(_mod, global, decl->name().c_str(*_symbols));
     _globals.insert(decl, global);
+
+    if (decl->is_constexpr())
+    {
+        // For an constexpr global, we need to set its value immediately, as it can be accessed
+        // during integer constant evaluation.
+        context ctx{_vm,      _file,     _mod,        _consteval_result_global,
+                    _builder, &_globals, &_functions, {}};
+        codegen_global_init(ctx, global, decl);
+    }
 }
 
 void clauf::codegen::declare_function(const function_decl* decl)
@@ -1024,7 +1030,10 @@ try
         ast.tree,
         [&](const variable_decl* decl) {
             if (decl->storage_duration() == storage_duration::static_ && decl->is_definition())
-                codegen_global_init(ctx, decl);
+            {
+                auto global = *ctx.globals->lookup(decl);
+                codegen_global_init(ctx, global, decl);
+            }
         },
         [&](const function_decl* decl) {
             if (decl->is_definition())

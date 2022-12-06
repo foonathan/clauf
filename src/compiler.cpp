@@ -1560,7 +1560,10 @@ struct declarator : lexy::expression_production
             return state.decl_tree.create<clauf::name_declarator>(name);
         },
         [](compiler_state& state, clauf::declarator* child, postfix_declarator, clauf::expr* expr) {
+            expr = state.ast.create<clauf::decay_expr>(state.ast.input.location_of(expr),
+                                                       expr->type(), expr);
             dryad::leak_node(expr);
+
             auto size = state.codegen.constant_eval_integer_expr(expr);
             return state.decl_tree.create<clauf::array_declarator>(child, size);
         },
