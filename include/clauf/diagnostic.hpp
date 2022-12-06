@@ -4,7 +4,7 @@
 #ifndef CLAUF_DIAGNOSTIC_HPP_INCLUDED
 #define CLAUF_DIAGNOSTIC_HPP_INCLUDED
 
-#include <clauf/compiler.hpp>
+#include <clauf/ast.hpp>
 #include <lexy_ext/report_error.hpp>
 
 namespace clauf
@@ -29,7 +29,7 @@ public:
                                                                     clauf::location           loc,
                                                                     const char* fmt, ...)
         {
-            auto begin_loc = lexy::get_input_location(_file->buffer, loc.begin);
+            auto begin_loc = lexy::get_input_location(_file->buffer(), loc.begin);
 
             va_list args;
             va_start(args, fmt);
@@ -46,10 +46,10 @@ public:
         void finish() {}
 
     private:
-        writer(const file* file) : _file(file), _impl(file->buffer, {lexy::visualize_fancy}) {}
+        writer(const file* file) : _file(file), _impl(file->buffer(), {lexy::visualize_fancy}) {}
 
-        const file*                                         _file;
-        lexy_ext::diagnostic_writer<decltype(file::buffer)> _impl;
+        const file*                                                         _file;
+        lexy_ext::diagnostic_writer<lexy::buffer<lexy::utf8_char_encoding>> _impl;
 
         friend diagnostic_logger;
     };
@@ -65,7 +65,7 @@ public:
                                        std::vfprintf(stderr, fmt, args);
                                        return out;
                                    });
-        result._impl.write_path(lexy::cfile_output_iterator{stderr}, _file->path);
+        result._impl.write_path(lexy::cfile_output_iterator{stderr}, _file->path());
 
         va_end(args);
         if (kind == lexy_ext::diagnostic_kind::error)
@@ -75,7 +75,7 @@ public:
 
     auto error_callback() const
     {
-        return lexy_ext::report_error.opts({lexy::visualize_fancy}).path(_file->path);
+        return lexy_ext::report_error.opts({lexy::visualize_fancy}).path(_file->path());
     }
 
 private:

@@ -50,9 +50,9 @@ struct compiler_state
 
     int symbol_generator_count;
 
-    compiler_state(lauf_vm* vm, const clauf::file& input)
-    : logger(input), vm(vm), global_scope(scope::global, nullptr), current_scope(&global_scope),
-      symbol_generator_count(0)
+    compiler_state(lauf_vm* vm, clauf::file&& input)
+    : logger(input), vm(vm), ast{LEXY_MOV(input)}, global_scope(scope::global, nullptr),
+      current_scope(&global_scope), symbol_generator_count(0)
     {}
 
     clauf::ast_symbol generate_symbol()
@@ -69,7 +69,7 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
     if (state.current_scope->kind != scope::local && state.current_scope->kind != scope::global)
     {
         state.logger.log(clauf::diagnostic_kind::error, "declaration not allowed in this scope")
-            .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl), "here")
+            .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(decl), "here")
             .finish();
     }
 
@@ -84,9 +84,9 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
         state.logger
             .log(clauf::diagnostic_kind::error, "duplicate %s definition '%s'",
                  state.current_scope->kind == scope::global ? "global" : "local", name)
-            .annotation(clauf::annotation_kind::secondary, state.ast.location_of(shadowed),
+            .annotation(clauf::annotation_kind::secondary, state.ast.input.location_of(shadowed),
                         "first declaration")
-            .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+            .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(decl),
                         "second declaration")
             .finish();
         return;
@@ -834,7 +834,7 @@ struct expr : lexy::expression_production
                     .log(clauf::diagnostic_kind::error,
                          "only sizeof can take an expression directly")
                     .annotation(clauf::annotation_kind::primary,
-                                state.ast.location_of(operand_expr), "here")
+                                state.ast.input.location_of(operand_expr), "here")
                     .finish();
             }
 
@@ -881,7 +881,7 @@ struct expr : lexy::expression_production
             {
                 state.logger
                     .log(clauf::diagnostic_kind::error, "called expression is not a function")
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
+                    .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(fn),
                                 "call here")
                     .finish();
 
@@ -897,7 +897,7 @@ struct expr : lexy::expression_production
             while (!arguments.empty() && cur_param != end_param)
             {
                 auto argument = arguments.pop_front();
-                auto loc      = state.ast.location_of(argument);
+                auto loc      = state.ast.input.location_of(argument);
                 argument      = do_lvalue_conversion(state, loc, argument);
                 argument = do_assignment_conversion(state, loc, assignment_op::none, *cur_param,
                                                     argument);
@@ -910,7 +910,7 @@ struct expr : lexy::expression_production
                 state.logger
                     .log(clauf::diagnostic_kind::error,
                          "mismatched number of parameters and arguments in function call")
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(fn),
+                    .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(fn),
                                 "call here")
                     .finish();
             }
@@ -1182,7 +1182,7 @@ struct return_stmt
                     .log(clauf::diagnostic_kind::error,
                          "function with non-void return type must have a return value")
                     .annotation(clauf::annotation_kind::secondary,
-                                state.ast.location_of(state.current_function),
+                                state.ast.input.location_of(state.current_function),
                                 "return type declared here")
                     .annotation(clauf::annotation_kind::primary, pos, "missing return value here")
                     .finish();
@@ -1731,11 +1731,12 @@ struct declaration
         {
             if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
             {
-                auto decl           = create_non_init_declaration(state, ty_stor, init->child());
-                auto var_decl       = dryad::node_cast<clauf::variable_decl>(decl);
-                auto converted_init = do_assignment_conversion(state, state.ast.location_of(decl),
-                                                               assignment_op::none, decl->type(),
-                                                               init->initializer());
+                auto decl     = create_non_init_declaration(state, ty_stor, init->child());
+                auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
+                auto converted_init
+                    = do_assignment_conversion(state, state.ast.input.location_of(decl),
+                                               assignment_op::none, decl->type(),
+                                               init->initializer());
                 var_decl->set_initializer(converted_init);
                 result.push_back(decl);
 
@@ -1744,8 +1745,8 @@ struct declaration
                     state.logger
                         .log(clauf::diagnostic_kind::error,
                              "initializer for global variable needs to be a constant expression")
-                        .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
-                                    "here")
+                        .annotation(clauf::annotation_kind::primary,
+                                    state.ast.input.location_of(decl), "here")
                         .finish();
                 }
                 if (!var_decl->is_definition())
@@ -1753,8 +1754,8 @@ struct declaration
                     state.logger
                         .log(clauf::diagnostic_kind::error,
                              "variable forward declaration cannot have an initializer")
-                        .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
-                                    "here")
+                        .annotation(clauf::annotation_kind::primary,
+                                    state.ast.input.location_of(decl), "here")
                         .finish();
                 }
             }
@@ -1904,7 +1905,7 @@ bool resolve_forward_declarations(compiler_state& state)
                 auto name = decl->name().c_str(state.ast.symbols);
                 state.logger
                     .log(clauf::diagnostic_kind::error, "undefined declaration of '%s'", name)
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                    .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(decl),
                                 "forward declaration here")
                     .finish();
                 success = false;
@@ -1917,9 +1918,9 @@ bool resolve_forward_declarations(compiler_state& state)
                 state.logger
                     .log(clauf::diagnostic_kind::error,
                          "redeclaration of '%s' as a different entity", name)
-                    .annotation(clauf::annotation_kind::secondary, state.ast.location_of(def),
+                    .annotation(clauf::annotation_kind::secondary, state.ast.input.location_of(def),
                                 "definition")
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                    .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(decl),
                                 "forward declaration")
                     .finish();
                 success = false;
@@ -1930,9 +1931,9 @@ bool resolve_forward_declarations(compiler_state& state)
                 state.logger
                     .log(clauf::diagnostic_kind::error,
                          "redeclaration of '%s' with a different type", name)
-                    .annotation(clauf::annotation_kind::secondary, state.ast.location_of(def),
+                    .annotation(clauf::annotation_kind::secondary, state.ast.input.location_of(def),
                                 "definition")
-                    .annotation(clauf::annotation_kind::primary, state.ast.location_of(decl),
+                    .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(decl),
                                 "forward declaration")
                     .finish();
                 success = false;
@@ -1950,8 +1951,8 @@ bool resolve_forward_declarations(compiler_state& state)
 
 std::optional<clauf::ast> clauf::compile(lauf_vm* vm, file&& input)
 {
-    compiler_state state(vm, input);
-    auto           result = lexy::parse<clauf::grammar::translation_unit>(input.buffer, state,
+    compiler_state state(vm, LEXY_MOV(input));
+    auto result = lexy::parse<clauf::grammar::translation_unit>(state.ast.input.buffer(), state,
                                                                 state.logger.error_callback());
     if (!result || !state.logger)
         return std::nullopt;
@@ -1960,7 +1961,6 @@ std::optional<clauf::ast> clauf::compile(lauf_vm* vm, file&& input)
     if (!resolve_forward_declarations(state))
         return std::nullopt;
 
-    state.ast.input = std::move(input);
     return std::move(state.ast);
 }
 

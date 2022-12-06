@@ -307,6 +307,41 @@ struct name
     location   loc;
     ast_symbol symbol;
 };
+
+class file
+{
+public:
+    explicit file(const char* path, lexy::buffer<lexy::utf8_char_encoding>&& buffer)
+    : _buffer(LEXY_MOV(buffer)), _path(path)
+    {}
+
+    const lexy::buffer<lexy::utf8_char_encoding>& buffer() const
+    {
+        return _buffer;
+    }
+
+    const char* path() const noexcept
+    {
+        return _path;
+    }
+
+    void set_location(const node* n, location loc)
+    {
+        _map.insert(n, loc);
+    }
+
+    location location_of(const node* n) const
+    {
+        auto result = _map.lookup(n);
+        CLAUF_ASSERT(result != nullptr, "every node should have a location");
+        return *result;
+    }
+
+private:
+    lexy::buffer<lexy::utf8_char_encoding> _buffer;
+    const char*                            _path;
+    dryad::node_map<const node, location>  _map;
+};
 } // namespace clauf
 
 //=== expr ===//
@@ -1109,12 +1144,6 @@ public:
     DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, this)
 };
 
-struct file
-{
-    lexy::buffer<lexy::utf8_char_encoding> buffer;
-    const char*                            path;
-};
-
 /// The entire AST of a source file.
 struct ast
 {
@@ -1122,7 +1151,8 @@ struct ast
     dryad::symbol_interner<ast_symbol_id, char, std::uint32_t> symbols;
     dryad::tree<translation_unit>                              tree;
     type_forest                                                types;
-    dryad::node_map<node, location>                            locations;
+
+    explicit ast(file&& input) : input(LEXY_MOV(input)) {}
 
     translation_unit* root()
     {
@@ -1137,7 +1167,7 @@ struct ast
     auto create(location loc, Args&&... args) -> std::enable_if_t<dryad::is_node<T, node_kind>, T*>
     {
         auto node = tree.template create<T>(DRYAD_FWD(args)...);
-        locations.insert(node, loc);
+        input.set_location(node, loc);
         return node;
     }
     template <typename T, typename... Args>
@@ -1148,13 +1178,6 @@ struct ast
     builtin_type* create(builtin_type::type_kind_t kind)
     {
         return dryad::node_cast<builtin_type>(types.lookup_or_create<builtin_type>(kind));
-    }
-
-    location location_of(const node* n) const
-    {
-        auto result = locations.lookup(n);
-        CLAUF_ASSERT(result != nullptr, "every node should have a location");
-        return *result;
     }
 };
 

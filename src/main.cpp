@@ -39,7 +39,7 @@ int main(const options& opts)
     }
 
     auto vm  = lauf_create_vm(lauf_default_vm_options);
-    auto ast = compile(vm, clauf::file{file.buffer(), opts.input.c_str()});
+    auto ast = compile(vm, clauf::file(opts.input.c_str(), LEXY_MOV(file).buffer()));
     if (!ast)
         return 1;
 

@@ -12,7 +12,7 @@ struct lauf_vm;
 namespace clauf
 {
 struct ast;
-struct file;
+class file;
 
 /// If input is well-formed C (including name lookup and type checking), return its AST.
 /// Otherwise, log error and return nothing.
