@@ -202,6 +202,7 @@ struct context
     lauf_vm*                                                               vm;
     const clauf::file*                                                     input;
     lauf_asm_module*                                                       mod;
+    lauf_asm_chunk*                                                        consteval_chunk;
     lauf_asm_global*                                                       consteval_result_global;
     lauf_asm_builder*                                                      builder;
     const dryad::node_map<const clauf::variable_decl, lauf_asm_global*>*   globals;
@@ -717,7 +718,7 @@ void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
     auto type = codegen_type(e->type());
 
     // We create a chunk that will hold the bytecode for our expression.
-    auto chunk = lauf_asm_create_chunk(ctx.mod);
+    auto chunk = ctx.consteval_chunk;
     {
         auto b = ctx.builder;
         lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
@@ -961,6 +962,7 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
 clauf::codegen::codegen(lauf_vm* vm, const file& f, const ast_symbol_interner& sym)
 : _vm(vm), _file(&f), _symbols(&sym), _mod(lauf_asm_create_module("main module")),
   _builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
+  _consteval_chunk(lauf_asm_create_chunk(_mod)),
   _consteval_result_global(lauf_asm_add_global(_mod, LAUF_ASM_GLOBAL_READ_WRITE))
 {
     lauf_asm_set_module_debug_path(_mod, f.path());
@@ -985,8 +987,9 @@ void clauf::codegen::declare_global(const variable_decl* decl)
     {
         // For an constexpr global, we need to set its value immediately, as it can be accessed
         // during integer constant evaluation.
-        context ctx{_vm,      _file,     _mod,        _consteval_result_global,
-                    _builder, &_globals, &_functions, {}};
+        context
+            ctx{_vm,       _file,       _mod, _consteval_chunk, _consteval_result_global, _builder,
+                &_globals, &_functions, {}};
         codegen_global_init(ctx, global, decl);
     }
 }
@@ -1013,7 +1016,8 @@ std::size_t clauf::codegen::constant_eval_integer_expr(const expr* expr)
     if (auto integer = dryad::node_try_cast<clauf::integer_constant_expr>(expr))
         return std::size_t(integer->value());
 
-    context ctx{_vm, _file, _mod, _consteval_result_global, _builder, &_globals, &_functions, {}};
+    context ctx{_vm,       _file,       _mod, _consteval_chunk, _consteval_result_global, _builder,
+                &_globals, &_functions, {}};
 
     lauf_runtime_value result;
     constant_eval_impl(&result, ctx, expr);
@@ -1023,13 +1027,16 @@ std::size_t clauf::codegen::constant_eval_integer_expr(const expr* expr)
 lauf_asm_module* clauf::codegen::finish(const ast& ast) &&
 try
 {
-    context ctx{_vm, _file, _mod, _consteval_result_global, _builder, &_globals, &_functions, {}};
+    context ctx{_vm,       _file,       _mod, _consteval_chunk, _consteval_result_global, _builder,
+                &_globals, &_functions, {}};
 
     // Generate body for all lauf declarations.
     dryad::visit_tree(
         ast.tree,
         [&](const variable_decl* decl) {
-            if (decl->storage_duration() == storage_duration::static_ && decl->is_definition())
+            // We need to initialize all non-constexpr globals, because that hasn't happened before.
+            if (decl->storage_duration() == storage_duration::static_ && decl->is_definition()
+                && !decl->is_constexpr())
             {
                 auto global = *ctx.globals->lookup(decl);
                 codegen_global_init(ctx, global, decl);

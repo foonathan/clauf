@@ -39,6 +39,7 @@ private:
 
     lauf_asm_module*  _mod;
     lauf_asm_builder* _builder;
+    lauf_asm_chunk*   _consteval_chunk;
     lauf_asm_global*  _consteval_result_global;
 
     dryad::node_map<const clauf::variable_decl, lauf_asm_global*>   _globals;
