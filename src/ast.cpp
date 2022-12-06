@@ -318,6 +318,7 @@ bool clauf::is_arithmetic_constant_expr(const expr* e)
         [](const identifier_expr* e) { return is_named_constant(e); },
         [](const function_call_expr*) { return false; },
         [](const cast_expr* e) { return is_arithmetic_constant_expr(e->child()); },
+        [](const decay_expr* e) { return is_arithmetic_constant_expr(e->child()); },
         [](const unary_expr* e) {
             switch (e->op())
             {

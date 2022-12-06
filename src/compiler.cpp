@@ -1560,10 +1560,20 @@ struct declarator : lexy::expression_production
             return state.decl_tree.create<clauf::name_declarator>(name);
         },
         [](compiler_state& state, clauf::declarator* child, postfix_declarator, clauf::expr* expr) {
-            expr = do_lvalue_conversion(state, state.ast.input.location_of(expr), expr);
+            auto loc = state.ast.input.location_of(expr);
+            expr     = do_lvalue_conversion(state, loc, expr);
             dryad::leak_node(expr);
 
-            auto size = state.codegen.constant_eval_integer_expr(expr);
+            auto size = [&] {
+                if (clauf::is_integer_constant_expr(expr))
+                    return state.codegen.constant_eval_integer_expr(expr);
+
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "variable length arrays are not supported")
+                    .annotation(clauf::annotation_kind::primary, loc, "here")
+                    .finish();
+                return std::size_t(0);
+            }();
             return state.decl_tree.create<clauf::array_declarator>(child, size);
         },
         [](compiler_state& state, clauf::declarator* child, postfix_declarator,
