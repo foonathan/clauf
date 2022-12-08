@@ -15,6 +15,7 @@
 #include <lauf/lib/memory.h>
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
+#include <lauf/runtime/memory.h>
 #include <lauf/runtime/value.h>
 #include <lexy/input_location.hpp>
 #include <stdexcept>
@@ -27,7 +28,7 @@
 //=== helper functions ===//
 namespace
 {
-lauf_asm_type codegen_type(const clauf::type* ty)
+const lauf_asm_type* codegen_type(const clauf::type* ty)
 {
     return dryad::visit_node_all(
         ty,
@@ -37,34 +38,33 @@ lauf_asm_type codegen_type(const clauf::type* ty)
             case clauf::builtin_type::void_:
                 CLAUF_UNREACHABLE("not needed in lauf");
             case clauf::builtin_type::nullptr_t:
-                return lauf_asm_type_value;
+                return &lauf_asm_type_value;
 
             case clauf::builtin_type::sint8:
-                return lauf_lib_int_s8;
+                return &lauf_lib_int_s8;
             case clauf::builtin_type::uint8:
-                return lauf_lib_int_u8;
+                return &lauf_lib_int_u8;
             case clauf::builtin_type::sint16:
-                return lauf_lib_int_s16;
+                return &lauf_lib_int_s16;
             case clauf::builtin_type::uint16:
-                return lauf_lib_int_u16;
+                return &lauf_lib_int_u16;
             case clauf::builtin_type::sint32:
-                return lauf_lib_int_s32;
+                return &lauf_lib_int_s32;
             case clauf::builtin_type::uint32:
-                return lauf_lib_int_u32;
+                return &lauf_lib_int_u32;
             case clauf::builtin_type::sint64:
-                return lauf_lib_int_s64;
+                return &lauf_lib_int_s64;
             case clauf::builtin_type::uint64:
-                return lauf_lib_int_u64;
+                return &lauf_lib_int_u64;
             }
         },
-        [](const clauf::pointer_type*) { return lauf_asm_type_value; },
-        [](const clauf::function_type*) {
-            CLAUF_UNREACHABLE("not the type of a variable");
-            return lauf_asm_type_value;
-        },
+        [](const clauf::pointer_type*) { return &lauf_asm_type_value; },
+        [](const clauf::array_type*) { return nullptr; },
+        [](const clauf::function_type*) { return nullptr; },
         [](const clauf::qualified_type* ty) { return codegen_type(ty->unqualified_type()); });
 }
 
+// INVARIANT: the resulting layout has a size that is a multiple of alignment.
 lauf_asm_layout codegen_layout(const clauf::type* ty)
 {
     if (auto array_ty = dryad::node_try_cast<clauf::array_type>(ty))
@@ -74,7 +74,7 @@ lauf_asm_layout codegen_layout(const clauf::type* ty)
     }
     else
     {
-        return codegen_type(ty).layout;
+        return codegen_type(ty)->layout;
     }
 }
 
@@ -91,7 +91,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             // Convert that to the type of the pointee.
             auto pointee_type = codegen_type(
                 dryad::node_cast<clauf::pointer_type>(expr->left()->type())->pointee_type());
-            lauf_asm_inst_uint(b, pointee_type.layout.size);
+            lauf_asm_inst_uint(b, pointee_type->layout.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
 
             return;
@@ -112,7 +112,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             // Multiply it by the size of the type.
             auto pointee_type
                 = codegen_type(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
-            lauf_asm_inst_uint(b, pointee_type.layout.size);
+            lauf_asm_inst_uint(b, pointee_type->layout.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
 
             // Offset the pointer.
@@ -133,7 +133,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             // Multiply it by the size of the type.
             auto pointee_type
                 = codegen_type(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
-            lauf_asm_inst_uint(b, pointee_type.layout.size);
+            lauf_asm_inst_uint(b, pointee_type->layout.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
 
             // Offset the pointer.
@@ -421,7 +421,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             {
                 // Load the value stored at that point.
                 auto type = codegen_type(expr->type());
-                lauf_asm_inst_load_field(b, type, 0);
+                lauf_asm_inst_load_field(b, *type, 0);
             }
         },
         [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
@@ -453,7 +453,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
 
                 // Because its an lvalue, the address is on the stack.
                 // Do a load to get the value.
-                lauf_asm_inst_load_field(b, type, 0);
+                lauf_asm_inst_load_field(b, *type, 0);
 
                 // Add/subtract one to the current value.
                 lauf_asm_inst_uint(b, 1);
@@ -466,7 +466,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                 // Save a copy into the lvalue.
                 lauf_asm_inst_pick(b, 0);
                 codegen_lvalue(ctx, expr->child());
-                lauf_asm_inst_store_field(b, type, 0);
+                lauf_asm_inst_store_field(b, *type, 0);
 
                 // At this point, the new value is on the stack.
                 break;
@@ -478,7 +478,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
 
                 // Because its an lvalue, the address is on the stack.
                 // Do a load to get the value.
-                lauf_asm_inst_load_field(b, type, 0);
+                lauf_asm_inst_load_field(b, *type, 0);
 
                 // We duplicate the old value as we want to evaluate that.
                 lauf_asm_inst_pick(b, 0);
@@ -493,7 +493,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
 
                 // Store the new value in the lvalue, this removes it from the stack.
                 codegen_lvalue(ctx, expr->child());
-                lauf_asm_inst_store_field(b, type, 0);
+                lauf_asm_inst_store_field(b, *type, 0);
 
                 // At this point, the old value is on the stack.
                 break;
@@ -660,7 +660,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                 visitor(expr->left());
                 // Manually do that here.
                 auto type = codegen_type(expr->left()->type());
-                lauf_asm_inst_load_field(b, type, 0);
+                lauf_asm_inst_load_field(b, *type, 0);
 
                 visitor(expr->right());
                 call_arithmetic_builtin(b, expr->op(), expr);
@@ -681,7 +681,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             // Push the address of the lvalue onto the stack.
             codegen_lvalue(ctx, expr->left());
             // Store the value into address.
-            lauf_asm_inst_store_field(b, codegen_type(expr->left()->type()), 0);
+            lauf_asm_inst_store_field(b, *codegen_type(expr->left()->type()), 0);
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
@@ -714,9 +714,10 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
         });
 }
 
-void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
+template <typename ExprOrInit>
+void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const ExprOrInit* e)
 {
-    auto type = codegen_type(e->type());
+    auto layout = codegen_layout(type);
 
     // We create a chunk that will hold the bytecode for our expression.
     auto chunk = ctx.consteval_chunk;
@@ -724,10 +725,19 @@ void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
         auto b = ctx.builder;
         lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
 
-        // Store the result of the expression in the native global.
-        codegen_expr(ctx, e);
-        lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
-        lauf_asm_inst_store_field(b, type, 0);
+        if constexpr (std::is_same_v<ExprOrInit, clauf::expr>)
+        {
+            // Store the result of the expression in the native global.
+            auto lauf_type = codegen_type(type);
+            codegen_expr(ctx, e);
+            lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
+            lauf_asm_inst_store_field(b, *lauf_type, 0);
+        }
+        else
+        {
+            lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
+            codegen_init(ctx, type, e);
+        }
 
         lauf_asm_inst_return(b);
         lauf_asm_build_finish(b);
@@ -739,12 +749,12 @@ void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
 
         lauf_asm_native result_native_global;
         lauf_asm_define_native_global(&result_native_global, &program, ctx.consteval_result_global,
-                                      data, type.layout.size);
+                                      data, layout.size);
 
         struct ph_data_t
         {
-            const context&     ctx;
-            const clauf::expr* e;
+            const context&    ctx;
+            const ExprOrInit* e;
         } ph_data = {ctx, e};
         auto ph   = [](void* data, lauf_runtime_process*, const char* msg) {
             auto [ctx, e] = *static_cast<ph_data_t*>(data);
@@ -764,12 +774,15 @@ void constant_eval_impl(void* data, context& ctx, const clauf::expr* e)
     }
 }
 
-std::vector<unsigned char> constant_eval(context& ctx, const clauf::expr* e)
+std::vector<unsigned char> constant_eval(context& ctx, const clauf::type* type,
+                                         const clauf::init* init)
 {
-    auto                       type = codegen_type(e->type());
+    auto                       layout = codegen_layout(type);
     std::vector<unsigned char> result;
-    result.resize(type.layout.size);
-    constant_eval_impl(result.data(), ctx, e);
+    result.resize(layout.size);
+
+    constant_eval_impl(result.data(), ctx, type, init);
+
     return result;
 }
 
@@ -779,12 +792,78 @@ void codegen_global_init(context& ctx, lauf_asm_global* global, const clauf::var
 
     if (decl->has_initializer())
     {
-        auto init = constant_eval(ctx, decl->initializer());
+        auto init = constant_eval(ctx, decl->type(), decl->initializer());
         lauf_asm_define_data_global(ctx.mod, global, layout, init.data());
     }
     else
     {
         lauf_asm_define_data_global(ctx.mod, global, layout, nullptr);
+    }
+}
+
+LAUF_RUNTIME_BUILTIN(lauf_memset, 2, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "memset", nullptr)
+{
+    auto size    = vstack_ptr[0].as_uint;
+    auto address = vstack_ptr[1].as_address;
+
+    auto ptr = lauf_runtime_get_mut_ptr(process, address, {size, 1});
+    std::memset(ptr, 0, size);
+
+    vstack_ptr += 2;
+    LAUF_RUNTIME_BUILTIN_DISPATCH;
+}
+
+// Initializes the object whose address is on top of the stack.
+void codegen_init(context& ctx, const clauf::type* type, const clauf::init* init)
+{
+    auto b = ctx.builder;
+    if (auto lauf_type = codegen_type(type))
+    {
+        // Evaluate the initializer to a single stack value.
+        CLAUF_ASSERT(clauf::is_scalar(type), "only scalars map to single stack values");
+
+        dryad::visit_tree(
+            init, [&](const clauf::empty_init*) { lauf_asm_inst_uint(b, 0); },
+            [&](const clauf::braced_init*) {
+                // No need to do anything, the children push the value.
+            },
+            [&](const clauf::expr_init* init) { codegen_expr(ctx, init->expression()); });
+
+        // Store it into the object.
+        lauf_asm_inst_roll(b, 1);
+        lauf_asm_inst_store_field(b, *lauf_type, 0);
+    }
+    else if (auto array = dryad::node_try_cast<const clauf::array_type>(type))
+    {
+        auto elem_layout = codegen_layout(array->element_type());
+        dryad::visit_node_all(
+            init,
+            [&](const clauf::empty_init*) {
+                lauf_asm_inst_uint(b, array->size() * elem_layout.size);
+                lauf_asm_inst_call_builtin(b, lauf_memset);
+            },
+            [&](const clauf::expr_init*) { CLAUF_UNREACHABLE("this is not valid C code"); },
+            [&](const clauf::braced_init* init) {
+                for (auto elem_init : init->initializers())
+                {
+                    lauf_asm_inst_pick(b, 0);
+                    codegen_init(ctx, array->element_type(), elem_init);
+
+                    lauf_asm_inst_uint(b, elem_layout.size);
+                    lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_add(
+                                                      LAUF_LIB_MEMORY_ADDR_OVERFLOW_PANIC));
+                }
+
+                if (init->trailing_empty_inits() > 0)
+                {
+                    lauf_asm_inst_uint(b, init->trailing_empty_inits() * elem_layout.size);
+                    lauf_asm_inst_call_builtin(b, lauf_memset);
+                }
+            });
+    }
+    else
+    {
+        CLAUF_TODO("unimplemented initializer for non-scalar type");
     }
 }
 
@@ -808,11 +887,11 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
         auto param_decl = *iter;
         auto type       = codegen_type(param_decl->type());
 
-        auto var = lauf_asm_build_local(b, type.layout);
+        auto var = lauf_asm_build_local(b, type->layout);
         ctx.local_vars.insert(param_decl, var);
 
         lauf_asm_inst_local_addr(b, var);
-        lauf_asm_inst_store_field(b, type, 0);
+        lauf_asm_inst_store_field(b, *type, 0);
     }
 
     lauf_asm_block* block_loop_end    = nullptr;
@@ -926,7 +1005,7 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
         },
         //=== declarations ===//
         dryad::ignore_node<clauf::function_decl>,
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::variable_decl* decl) {
+        [&](dryad::child_visitor<clauf::node_kind>, const clauf::variable_decl* decl) {
             if (decl->storage_duration() != clauf::storage_duration::static_)
             {
                 auto layout = codegen_layout(decl->type());
@@ -935,11 +1014,8 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
 
                 if (decl->has_initializer())
                 {
-                    visitor(decl->initializer());
-
-                    auto type = codegen_type(decl->type());
                     lauf_asm_inst_local_addr(b, var);
-                    lauf_asm_inst_store_field(b, type, 0);
+                    codegen_init(ctx, decl->type(), decl->initializer());
                 }
             }
         },
@@ -1024,7 +1100,7 @@ try
                 _builder, &_globals, &_functions, {}};
 
     lauf_runtime_value result;
-    constant_eval_impl(&result, ctx, expr);
+    constant_eval_impl(&result, ctx, expr->type(), expr);
     return std::size_t(result.as_uint);
 }
 catch (std::runtime_error&)

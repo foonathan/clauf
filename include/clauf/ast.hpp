@@ -266,6 +266,14 @@ enum class node_kind
     first_stmt = decl_stmt,
     last_stmt  = block_stmt,
 
+    //=== initializers ===//
+    empty_init,
+    braced_init,
+    expr_init,
+
+    first_init = empty_init,
+    last_init  = expr_init,
+
     //=== declarations ===//
     variable_decl,
     parameter_decl,
@@ -828,6 +836,82 @@ public:
 };
 } // namespace clauf
 
+//=== initializers ===//
+namespace clauf
+{
+/// The initializer of a declaration.
+class init : public dryad::abstract_node_range<node, node_kind::first_init, node_kind::last_init>
+{
+protected:
+    DRYAD_ABSTRACT_NODE_CTOR(init)
+};
+
+/// The empty initializer.
+class empty_init : public dryad::basic_node<node_kind::empty_init, init>
+{
+public:
+    DRYAD_NODE_CTOR(empty_init)
+};
+
+/// A braced initializer.
+class braced_init : public dryad::basic_node<node_kind::braced_init, dryad::container_node<init>>
+{
+public:
+    braced_init(dryad::node_ctor ctor, dryad::unlinked_node_list<init> initializers)
+    : node_base(ctor)
+    {
+        this->insert_child_list_after(nullptr, initializers);
+    }
+
+    DRYAD_CHILD_NODE_RANGE_GETTER(init, initializers, nullptr, this)
+
+    std::size_t trailing_empty_inits() const
+    {
+        return _trailing_empty_inits;
+    }
+    void set_trailing_empty_inits(std::size_t n)
+    {
+        _trailing_empty_inits = n;
+    }
+
+private:
+    std::size_t _trailing_empty_inits = 0;
+};
+
+/// An expression initializer.
+class expr_init : public dryad::basic_node<node_kind::expr_init, dryad::container_node<init>>
+{
+public:
+    expr_init(dryad::node_ctor ctor, expr* e) : node_base(ctor), _expr(e) {}
+
+    expr* expression()
+    {
+        return _expr;
+    }
+    const expr* expression() const
+    {
+        return _expr;
+    }
+
+    void set_expression(expr* e)
+    {
+        _expr = e;
+    }
+
+    // Adds the expression as a child; it can now longer be changed.
+    // This needs to be called after all implicit conversions have been handled.
+    void freeze_expression()
+    {
+        this->insert_child_after(nullptr, _expr);
+    }
+
+private:
+    expr* _expr;
+};
+
+bool is_constant_init(const init* init);
+} // namespace clauf
+
 //=== declaration ===//
 namespace clauf
 {
@@ -909,7 +993,7 @@ class variable_decl : public dryad::basic_node<node_kind::variable_decl, decl>
 public:
     explicit variable_decl(dryad::node_ctor ctor, clauf::linkage linkage, ast_symbol name,
                            storage_duration sd, bool is_constexpr, const clauf::type* type,
-                           clauf::expr* initializer = nullptr)
+                           clauf::init* initializer = nullptr)
     : node_base(ctor, name, type), _sd(sd), _constexpr(is_constexpr)
     {
         set_linkage_impl(linkage);
@@ -921,12 +1005,12 @@ public:
     {
         return first_child() != nullptr;
     }
-    void set_initializer(clauf::expr* initializer)
+    void set_initializer(clauf::init* initializer)
     {
         CLAUF_PRECONDITION(!has_initializer());
         insert_child_after(nullptr, initializer);
     }
-    DRYAD_CHILD_NODE_GETTER(clauf::expr, initializer, nullptr)
+    DRYAD_CHILD_NODE_GETTER(clauf::init, initializer, nullptr)
 
     bool is_constexpr() const
     {
@@ -1107,7 +1191,7 @@ class init_declarator
 : public dryad::basic_node<declarator_kind::init, dryad::container_node<declarator>>
 {
 public:
-    explicit init_declarator(dryad::node_ctor ctor, declarator* child, expr* initializer)
+    explicit init_declarator(dryad::node_ctor ctor, declarator* child, init* initializer)
     : node_base(ctor), _init(initializer)
     {
         insert_child_after(nullptr, child);
@@ -1115,17 +1199,17 @@ public:
 
     DRYAD_CHILD_NODE_GETTER(declarator, child, nullptr)
 
-    expr* initializer() const
+    init* initializer() const
     {
         return _init;
     }
 
 private:
-    expr* _init;
+    init* _init;
 };
 
 name        get_name(const declarator* decl);
-expr*       get_init(const declarator* decl);
+init*       get_init(const declarator* decl);
 const type* get_type(type_forest& types, const declarator* decl, const type* decl_type);
 } // namespace clauf
 

@@ -1643,14 +1643,35 @@ struct parameter_list
     static constexpr auto value = lexy::as_list<clauf::parameter_list>;
 };
 
+struct initializer
+{
+    static constexpr auto rule
+        = dsl::position
+          + (dsl::curly_bracketed.opt_list(dsl::recurse<initializer>, dsl::trailing_sep(dsl::comma))
+             | dsl::else_ >> dsl::p<assignment_expr>);
+
+    static constexpr auto value
+        = lexy::as_list<dryad::unlinked_node_list<clauf::init>> >> callback<clauf::init*>(
+              [](compiler_state& state, const char* pos, lexy::nullopt) {
+                  return state.ast.create<clauf::empty_init>(pos);
+              },
+              [](compiler_state& state, const char* pos, clauf::expr* expr) {
+                  return state.ast.create<clauf::expr_init>(pos, expr);
+              },
+              [](compiler_state& state, const char* pos,
+                 dryad::unlinked_node_list<clauf::init> inits) -> clauf::init* {
+                  return state.ast.create<clauf::braced_init>(pos, inits);
+              });
+};
+
 struct init_declarator
 {
     static constexpr auto rule = dsl::p<declarator<>> //
-                                 + dsl::if_(dsl::equal_sign >> dsl::p<assignment_expr>);
+                                 + dsl::if_(dsl::equal_sign >> dsl::p<initializer>);
     static constexpr auto value = callback<clauf::declarator*>( //
         [](compiler_state&, clauf::declarator* decl) { return decl; },
-        [](compiler_state& state, clauf::declarator* decl, clauf::expr* expr) {
-            return state.decl_tree.create<clauf::init_declarator>(decl, expr);
+        [](compiler_state& state, clauf::declarator* decl, clauf::init* init) {
+            return state.decl_tree.create<clauf::init_declarator>(decl, init);
         });
 };
 struct init_declarator_list
@@ -1658,6 +1679,75 @@ struct init_declarator_list
     static constexpr auto rule  = dsl::list(dsl::p<init_declarator>, dsl::sep(dsl::comma));
     static constexpr auto value = lexy::as_list<clauf::declarator_list>;
 };
+
+void verify_init(compiler_state& state, clauf::location loc, const clauf::type* type,
+                 clauf::init* init)
+{
+    if (clauf::is_scalar(type))
+    {
+        dryad::visit_node_all(
+            init, [](clauf::empty_init*) {},
+            [&](clauf::expr_init* init) {
+                auto converted_expr
+                    = do_assignment_conversion(state, loc, clauf::assignment_op::none, type,
+                                               init->expression());
+                init->set_expression(converted_expr);
+                init->freeze_expression();
+            },
+            [&](clauf::braced_init* init) {
+                auto init_count
+                    = std::distance(init->initializers().begin(), init->initializers().end());
+
+                if (init_count != 1)
+                {
+                    CLAUF_ASSERT(init_count >= 1, "braced_init is non-empty");
+                    state.logger
+                        .log(clauf::diagnostic_kind::error, "too many initializers for scalar")
+                        .annotation(clauf::annotation_kind::primary, loc, "here")
+                        .finish();
+                    return;
+                }
+
+                // Verify the single initializer recursively.
+                verify_init(state, loc, type, init->initializers().front());
+            });
+    }
+    else if (auto array = dryad::node_try_cast<clauf::array_type>(type))
+    {
+        dryad::visit_node_all(
+            init, [](clauf::empty_init*) {},
+            [&](clauf::expr_init*) {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "cannot initialize array from expression")
+                    .annotation(clauf::annotation_kind::primary, loc, "here")
+                    .finish();
+            },
+            [&](clauf::braced_init* init) {
+                auto init_count = 0u;
+                for (auto elem_init : init->initializers())
+                {
+                    verify_init(state, loc, array->element_type(), elem_init);
+                    ++init_count;
+                }
+
+                if (init_count > array->size())
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error, "too many initializers for array")
+                        .annotation(clauf::annotation_kind::primary, loc, "here")
+                        .finish();
+                }
+                else
+                {
+                    init->set_trailing_empty_inits(array->size() - init_count);
+                }
+            });
+    }
+    else
+    {
+        CLAUF_TODO("unhandled non-scalar type");
+    }
+}
 
 struct declaration
 {
@@ -1762,14 +1852,13 @@ struct declaration
             {
                 auto decl     = create_non_init_declaration(state, ty_stor, init->child());
                 auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
-                auto converted_init
-                    = do_assignment_conversion(state, state.ast.input.location_of(decl),
-                                               assignment_op::none, decl->type(),
-                                               init->initializer());
-                var_decl->set_initializer(converted_init);
+
+                verify_init(state, state.ast.input.location_of(decl), decl->type(),
+                            init->initializer());
+                var_decl->set_initializer(init->initializer());
                 result.push_back(decl);
 
-                if (var_decl->is_constexpr() && !clauf::is_constant_expr(converted_init))
+                if (var_decl->is_constexpr() && !clauf::is_constant_init(init->initializer()))
                 {
                     state.logger
                         .log(clauf::diagnostic_kind::error,

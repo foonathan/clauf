@@ -432,6 +432,19 @@ bool clauf::is_constant_expr(const expr* e)
            || is_address_constant_with_offset(e);
 }
 
+bool clauf::is_constant_init(const init* init)
+{
+    return dryad::visit_node_all(
+        init, [](const empty_init*) { return true; },
+        [](const braced_init* init) {
+            for (auto child : init->initializers()) // NOLINT
+                if (!is_constant_init(child))
+                    return false;
+            return true;
+        },
+        [](const expr_init* init) { return is_constant_expr(init->expression()); });
+}
+
 clauf::name clauf::get_name(const declarator* decl)
 {
     return dryad::visit_node_all(
@@ -442,7 +455,7 @@ clauf::name clauf::get_name(const declarator* decl)
         [](const init_declarator* decl) { return get_name(decl->child()); });
 }
 
-clauf::expr* clauf::get_init(const declarator* decl)
+clauf::init* clauf::get_init(const declarator* decl)
 {
     if (auto init = dryad::node_try_cast<clauf::init_declarator>(decl))
         return init->initializer();
@@ -540,6 +553,12 @@ const char* to_string(clauf::node_kind kind)
         return "while stmt";
     case clauf::node_kind::block_stmt:
         return "block stmt";
+    case clauf::node_kind::empty_init:
+        return "empty init";
+    case clauf::node_kind::braced_init:
+        return "braced init";
+    case clauf::node_kind::expr_init:
+        return "expr init";
     case clauf::node_kind::variable_decl:
         return "variable decl";
     case clauf::node_kind::parameter_decl:
