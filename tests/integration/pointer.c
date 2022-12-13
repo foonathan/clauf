@@ -8,4 +8,8 @@ int main()
     *ptr = 11;
     __clauf_assert(*ptr == 11);
     __clauf_assert(obj == 11);
+
+    ptr[0] = 11 + 42;
+    __clauf_assert(ptr[0] == 53);
+    __clauf_assert(obj == 53);
 }

@@ -952,7 +952,7 @@ struct expr : lexy::expression_production
             if (!clauf::is_pointer(ptr->type()) && !clauf::is_array(ptr->type()))
                 std::swap(ptr, index);
 
-            ptr   = do_array_decay(state, op.loc, ptr);
+            ptr   = do_lvalue_conversion(state, op.loc, ptr);
             index = do_lvalue_conversion(state, op.loc, index);
 
             if (!clauf::is_pointer_to_complete_object_type(ptr->type())
