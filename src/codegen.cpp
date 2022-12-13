@@ -801,18 +801,6 @@ void codegen_global_init(context& ctx, lauf_asm_global* global, const clauf::var
     }
 }
 
-LAUF_RUNTIME_BUILTIN(lauf_memset, 2, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "memset", nullptr)
-{
-    auto size    = vstack_ptr[0].as_uint;
-    auto address = vstack_ptr[1].as_address;
-
-    auto ptr = lauf_runtime_get_mut_ptr(process, address, {size, 1});
-    std::memset(ptr, 0, size);
-
-    vstack_ptr += 2;
-    LAUF_RUNTIME_BUILTIN_DISPATCH;
-}
-
 // Initializes the object whose address is on top of the stack.
 void codegen_init(context& ctx, const clauf::type* type, const clauf::init* init)
 {
@@ -839,8 +827,9 @@ void codegen_init(context& ctx, const clauf::type* type, const clauf::init* init
         dryad::visit_node_all(
             init,
             [&](const clauf::empty_init*) {
+                lauf_asm_inst_uint(b, 0);
                 lauf_asm_inst_uint(b, array->size() * elem_layout.size);
-                lauf_asm_inst_call_builtin(b, lauf_memset);
+                lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
             },
             [&](const clauf::expr_init*) { CLAUF_UNREACHABLE("this is not valid C code"); },
             [&](const clauf::braced_init* init) {
@@ -856,8 +845,9 @@ void codegen_init(context& ctx, const clauf::type* type, const clauf::init* init
 
                 if (init->trailing_empty_inits() > 0)
                 {
+                    lauf_asm_inst_uint(b, 0);
                     lauf_asm_inst_uint(b, init->trailing_empty_inits() * elem_layout.size);
-                    lauf_asm_inst_call_builtin(b, lauf_memset);
+                    lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
                 }
             });
     }
