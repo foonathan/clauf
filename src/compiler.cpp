@@ -18,6 +18,9 @@
 
 namespace
 {
+class fatal_error
+{};
+
 struct scope
 {
     enum kind_t
@@ -572,10 +575,21 @@ struct type_name_in_parens
                     .finish();
             }
 
-            if (decl != nullptr)
-                return clauf::get_type(state.ast.types, decl, ty_stor.type);
-            else
+            if (decl == nullptr)
                 return ty_stor.type;
+
+            auto type = clauf::get_type(state.ast.types, decl, ty_stor.type);
+            if (type == nullptr)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "invalid combination of base type and declarator")
+                    .annotation(clauf::annotation_kind::primary, pos, "here")
+                    .finish();
+
+                type = state.ast.create(clauf::builtin_type::sint64);
+            }
+            return type;
         });
 };
 
@@ -1616,32 +1630,43 @@ struct declarator : lexy::expression_production
 
 struct parameter_decl
 {
-    static constexpr auto rule  = dsl::p<decl_specifier_list> + dsl::p<declarator<true>>;
-    static constexpr auto value = callback<clauf::parameter_decl*>(
-        [](compiler_state& state, type_with_specs ty_spec, clauf::declarator* decl) {
-            auto name = get_name(decl);
-            auto type = get_type(state.ast.types, decl, ty_spec.type);
+    static constexpr auto rule
+        = dsl::position + dsl::p<decl_specifier_list> + dsl::p<declarator<true>>;
+    static constexpr auto value
+        = callback<clauf::parameter_decl*>([](compiler_state& state, const char* pos,
+                                              type_with_specs ty_spec, clauf::declarator* decl) {
+              auto name = get_name(decl);
+              auto type = get_type(state.ast.types, decl, ty_spec.type);
+              if (type == nullptr)
+              {
+                  state.logger
+                      .log(clauf::diagnostic_kind::error,
+                           "invalid combination of base type and declarator")
+                      .annotation(clauf::annotation_kind::primary, pos, "here")
+                      .finish();
+                  throw fatal_error();
+              }
 
-            if (!ty_spec.is_valid_for_parameter())
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error,
-                         "invalid use of storage class specifier on parameter declaration")
-                    .annotation(clauf::annotation_kind::primary, name.loc,
-                                "used to declare parameter here")
-                    .finish();
-            }
-            if (!clauf::is_complete_object_type(type))
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
-                    .annotation(clauf::annotation_kind::primary, name.loc,
-                                "used to declare parameter here")
-                    .finish();
-            }
+              if (!ty_spec.is_valid_for_parameter())
+              {
+                  state.logger
+                      .log(clauf::diagnostic_kind::error,
+                           "invalid use of storage class specifier on parameter declaration")
+                      .annotation(clauf::annotation_kind::primary, name.loc,
+                                  "used to declare parameter here")
+                      .finish();
+              }
+              if (!clauf::is_complete_object_type(type))
+              {
+                  state.logger
+                      .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
+                      .annotation(clauf::annotation_kind::primary, name.loc,
+                                  "used to declare parameter here")
+                      .finish();
+              }
 
-            return state.ast.create<clauf::parameter_decl>(name.loc, name.symbol, type);
-        });
+              return state.ast.create<clauf::parameter_decl>(name.loc, name.symbol, type);
+          });
 };
 struct parameter_list
 {
@@ -1759,14 +1784,25 @@ void verify_init(compiler_state& state, clauf::location loc, const clauf::type* 
 
 struct declaration
 {
-    static constexpr auto rule
-        = dsl::p<decl_specifier_list> >> dsl::p<init_declarator_list> + dsl::semicolon;
+    static constexpr auto rule = dsl::position(dsl::p<decl_specifier_list>)
+                                 >> dsl::p<init_declarator_list> + dsl::semicolon;
 
-    static clauf::decl* create_non_init_declaration(compiler_state& state, type_with_specs ty_spec,
+    static clauf::decl* create_non_init_declaration(compiler_state& state, const char* pos,
+                                                    type_with_specs          ty_spec,
                                                     const clauf::declarator* declarator)
     {
         auto name = get_name(declarator);
         auto type = get_type(state.ast.types, declarator, ty_spec.type);
+        if (type == nullptr)
+        {
+            state.logger
+                .log(clauf::diagnostic_kind::error,
+                     "invalid combination of base type and declarator")
+                .annotation(clauf::annotation_kind::primary, pos, "here")
+                .finish();
+
+            throw fatal_error();
+        }
 
         auto default_linkage
             = state.current_scope == &state.global_scope
@@ -1849,16 +1885,15 @@ struct declaration
             });
     }
 
-    static constexpr auto value = callback<clauf::decl_list>([](compiler_state& state,
-                                                                type_with_specs ty_stor,
-                                                                const clauf::declarator_list&
-                                                                    declarators) {
+    static constexpr auto value = callback<
+        clauf::decl_list>([](compiler_state& state, const char* pos, type_with_specs ty_stor,
+                             const clauf::declarator_list& declarators) {
         clauf::decl_list result;
         for (auto declarator : declarators)
         {
             if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
             {
-                auto decl     = create_non_init_declaration(state, ty_stor, init->child());
+                auto decl     = create_non_init_declaration(state, pos, ty_stor, init->child());
                 auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
 
                 verify_init(state, state.ast.input.location_of(decl), decl->type(),
@@ -1887,7 +1922,7 @@ struct declaration
             }
             else
             {
-                result.push_back(create_non_init_declaration(state, ty_stor, declarator));
+                result.push_back(create_non_init_declaration(state, pos, ty_stor, declarator));
             }
         }
 
@@ -1900,6 +1935,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
     template <typename Context, typename Reader>
     static scan_result scan(lexy::rule_scanner<Context, Reader>& scanner, compiler_state& state)
     {
+        auto pos     = scanner.position();
         auto ty_spec = scanner.parse(grammar::decl_specifier_list{});
         if (!ty_spec)
             return lexy::scan_failed;
@@ -1943,6 +1979,17 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
 
             auto name = get_name(decl);
             auto type = get_type(state.ast.types, decl, ty_spec.value().type);
+            if (type == nullptr)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "invalid combination of base type and declarator")
+                    .annotation(clauf::annotation_kind::primary, pos, "here")
+                    .finish();
+
+                throw fatal_error();
+            }
+
             if (!ty_spec.value().is_valid_for_function())
             {
                 state.logger
@@ -1987,7 +2034,8 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             if (!scanner)
                 return lexy::scan_failed;
 
-            auto result = grammar::declaration::value[state](ty_spec.value(), decl_list.value());
+            auto result
+                = grammar::declaration::value[state](pos, ty_spec.value(), decl_list.value());
             for (auto decl : result)
             {
                 insert_new_decl(state, decl);
@@ -2085,6 +2133,7 @@ bool resolve_forward_declarations(compiler_state& state)
 } // namespace
 
 std::optional<clauf::compilation_result> clauf::compile(lauf_vm* vm, file&& input)
+try
 {
     compiler_state state(vm, LEXY_MOV(input));
     auto result = lexy::parse<clauf::grammar::translation_unit>(state.ast.input.buffer(), state,
@@ -2098,5 +2147,9 @@ std::optional<clauf::compilation_result> clauf::compile(lauf_vm* vm, file&& inpu
 
     auto mod = std::move(state.codegen).finish(state.ast);
     return clauf::compilation_result{std::move(state.ast), mod};
+}
+catch (fatal_error)
+{
+    return std::nullopt;
 }
 

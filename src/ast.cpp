@@ -471,30 +471,39 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
     return dryad::visit_node_all(
         decl, //
         [&](const clauf::name_declarator*) { return decl_type; },
-        [&](const clauf::pointer_declarator* decl) {
-            auto child_type = get_type(types, decl->child(), decl_type);
+        [&](const clauf::pointer_declarator* decl) -> const clauf::type* {
+            auto pointee_type = get_type(types, decl->child(), decl_type);
+            if (pointee_type == nullptr)
+                return nullptr;
+
             return types.build([&](clauf::type_forest::node_creator creator) {
                 clauf::type* result
-                    = creator.create<clauf::pointer_type>(clauf::clone(creator, child_type));
+                    = creator.create<clauf::pointer_type>(clauf::clone(creator, pointee_type));
                 if (decl->qualifiers() != clauf::qualified_type::unqualified)
                     result = creator.create<clauf::qualified_type>(decl->qualifiers(), result);
                 return result;
             });
         },
-        [&](const clauf::array_declarator* decl) {
-            auto child_type = get_type(types, decl->child(), decl_type);
+        [&](const clauf::array_declarator* decl) -> const clauf::type* {
+            auto element_type = get_type(types, decl->child(), decl_type);
+            if (element_type == nullptr || !clauf::is_complete_object_type(element_type))
+                return nullptr;
+
             return types.build([&](clauf::type_forest::node_creator creator) {
-                return creator.create<clauf::array_type>(clauf::clone(creator, child_type),
+                return creator.create<clauf::array_type>(clauf::clone(creator, element_type),
                                                          decl->size());
             });
         },
         [&](const clauf::function_declarator* decl) {
-            return types.build([&](clauf::type_forest::node_creator creator) {
+            return types.build([&](clauf::type_forest::node_creator creator) -> clauf::type* {
                 clauf::type_list parameter_types;
                 for (auto param : decl->parameters())
                     parameter_types.push_back(clauf::clone(creator, param->type()));
 
                 auto return_type = clauf::clone(creator, get_type(types, decl->child(), decl_type));
+                if (return_type == nullptr)
+                    return nullptr;
+
                 return creator.create<clauf::function_type>(return_type, parameter_types);
             });
         },
