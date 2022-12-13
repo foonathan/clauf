@@ -88,6 +88,11 @@ public:
 
     DRYAD_CHILD_NODE_GETTER(type, element_type, nullptr)
 
+    bool is_incomplete() const
+    {
+        return _size == 0;
+    }
+
     std::size_t size() const
     {
         return _size;

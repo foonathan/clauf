@@ -1537,7 +1537,7 @@ struct declarator : lexy::expression_production
     {
         static constexpr auto op
             = dsl::op<postfix_declarator>(LEXY_LIT("(") >> dsl::recurse<parameter_list>)
-              / dsl::op<postfix_declarator>(dsl::square_bracketed(dsl::p<assignment_expr>));
+              / dsl::op<postfix_declarator>(dsl::square_bracketed.opt(dsl::p<assignment_expr>));
         using operand = pointer_declarator;
     };
 
@@ -1559,7 +1559,14 @@ struct declarator : lexy::expression_production
         [](compiler_state& state, clauf::name name) {
             return state.decl_tree.create<clauf::name_declarator>(name);
         },
+        [](compiler_state& state, clauf::declarator* child, postfix_declarator) {
+            // TODO: why do we need this overload, this is a bug in lexy.
+            return state.decl_tree.create<clauf::array_declarator>(child, 0);
+        },
         [](compiler_state& state, clauf::declarator* child, postfix_declarator, clauf::expr* expr) {
+            if (expr == nullptr)
+                return state.decl_tree.create<clauf::array_declarator>(child, 0);
+
             auto loc = state.ast.input.location_of(expr);
             expr     = do_lvalue_conversion(state, loc, expr);
             dryad::leak_node(expr);

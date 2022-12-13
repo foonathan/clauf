@@ -171,6 +171,8 @@ bool clauf::is_complete_object_type(const type* ty_)
     auto ty = clauf::unqualified_type_of(ty_);
     if (dryad::node_has_kind<clauf::function_type>(ty))
         return false;
+    else if (auto array = dryad::node_try_cast<clauf::array_type>(ty))
+        return !array->is_incomplete();
 
     return !clauf::is_void(ty);
 }
