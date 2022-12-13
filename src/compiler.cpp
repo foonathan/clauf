@@ -1656,6 +1656,16 @@ struct parameter_decl
                                   "used to declare parameter here")
                       .finish();
               }
+
+              if (auto array = dryad::node_try_cast<clauf::array_type>(type);
+                  array != nullptr && array->is_incomplete())
+              {
+                  type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
+                      auto element_type = clauf::clone(creator, array->element_type());
+                      return creator.create<clauf::pointer_type>(element_type);
+                  });
+              }
+
               if (!clauf::is_complete_object_type(type))
               {
                   state.logger
