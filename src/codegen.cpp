@@ -852,6 +852,10 @@ void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
                         lauf_asm_inst_uint(b, init->trailing_empty_inits() * elem_layout.size);
                         lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
                     }
+                    else
+                    {
+                        lauf_asm_inst_pop(b, 0);
+                    }
                 }
                 else
                 {
