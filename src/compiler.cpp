@@ -1656,6 +1656,7 @@ struct initializer
                   return state.ast.create<clauf::empty_init>(pos);
               },
               [](compiler_state& state, const char* pos, clauf::expr* expr) {
+                  expr = do_lvalue_conversion(state, pos, expr);
                   return state.ast.create<clauf::expr_init>(pos, expr);
               },
               [](compiler_state& state, const char* pos,
