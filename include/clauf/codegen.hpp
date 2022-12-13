@@ -25,7 +25,8 @@ public:
 
     ~codegen()
     {
-        lauf_asm_destroy_builder(_builder);
+        lauf_asm_destroy_builder(_body_builder);
+        lauf_asm_destroy_builder(_chunk_builder);
     }
 
     void declare_global(const variable_decl* decl);
@@ -42,7 +43,8 @@ private:
     const ast_symbol_interner* _symbols;
 
     lauf_asm_module*  _mod;
-    lauf_asm_builder* _builder;
+    lauf_asm_builder* _body_builder;
+    lauf_asm_builder* _chunk_builder;
     lauf_asm_chunk*   _consteval_chunk;
     lauf_asm_global*  _consteval_result_global;
 

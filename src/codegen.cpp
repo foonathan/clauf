@@ -205,19 +205,19 @@ struct context
     lauf_asm_module*                                                       mod;
     lauf_asm_chunk*                                                        consteval_chunk;
     lauf_asm_global*                                                       consteval_result_global;
-    lauf_asm_builder*                                                      builder;
+    lauf_asm_builder*                                                      chunk_builder;
+    lauf_asm_builder*                                                      body_builder;
     const dryad::node_map<const clauf::variable_decl, lauf_asm_global*>*   globals;
     const dryad::node_map<const clauf::function_decl, lauf_asm_function*>* functions;
 
     dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
 };
 
-void codegen_expr(context& ctx, const clauf::expr* expr);
+void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr);
 
 // Evalutes the expression as an lvalue.
-void codegen_lvalue(context& ctx, const clauf::expr* expr)
+void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 {
-    auto b = ctx.builder;
     dryad::visit_node_all(
         expr,
         [&](const clauf::identifier_expr* expr) {
@@ -259,14 +259,13 @@ void codegen_lvalue(context& ctx, const clauf::expr* expr)
         },
         [&](const clauf::unary_expr* expr) {
             // To evaluate a pointer as an lvalue, we don't actually want to dereference it.
-            codegen_expr(ctx, expr->child());
+            codegen_expr(ctx, b, expr->child());
         });
 }
 
 // Evalutes the expression as an rvalue.
-void codegen_expr(context& ctx, const clauf::expr* expr)
+void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 {
-    auto b = ctx.builder;
     dryad::visit_tree(
         expr,
         [&](const clauf::nullptr_constant_expr*) {
@@ -318,7 +317,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                 break;
             }
         },
-        [&](const clauf::identifier_expr* expr) { codegen_lvalue(ctx, expr); },
+        [&](const clauf::identifier_expr* expr) { codegen_lvalue(ctx, b, expr); },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::function_call_expr* expr) {
             // Push each argument onto the stack.
             for (auto argument : expr->arguments())
@@ -465,7 +464,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
 
                 // Save a copy into the lvalue.
                 lauf_asm_inst_pick(b, 0);
-                codegen_lvalue(ctx, expr->child());
+                codegen_lvalue(ctx, b, expr->child());
                 lauf_asm_inst_store_field(b, *type, 0);
 
                 // At this point, the new value is on the stack.
@@ -492,7 +491,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
                                         expr);
 
                 // Store the new value in the lvalue, this removes it from the stack.
-                codegen_lvalue(ctx, expr->child());
+                codegen_lvalue(ctx, b, expr->child());
                 lauf_asm_inst_store_field(b, *type, 0);
 
                 // At this point, the old value is on the stack.
@@ -502,7 +501,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             case clauf::unary_op::address:
                 // Remove the value of the child expression and push its address instead.
                 lauf_asm_inst_pop(b, 0);
-                codegen_lvalue(ctx, expr->child());
+                codegen_lvalue(ctx, b, expr->child());
                 break;
             case clauf::unary_op::deref:
                 // The address is on top of the stack.
@@ -679,7 +678,7 @@ void codegen_expr(context& ctx, const clauf::expr* expr)
             }
 
             // Push the address of the lvalue onto the stack.
-            codegen_lvalue(ctx, expr->left());
+            codegen_lvalue(ctx, b, expr->left());
             // Store the value into address.
             lauf_asm_inst_store_field(b, *codegen_type(expr->left()->type()), 0);
         },
@@ -722,21 +721,21 @@ void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const
     // We create a chunk that will hold the bytecode for our expression.
     auto chunk = ctx.consteval_chunk;
     {
-        auto b = ctx.builder;
+        auto b = ctx.chunk_builder;
         lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
 
         if constexpr (std::is_same_v<ExprOrInit, clauf::expr>)
         {
             // Store the result of the expression in the native global.
             auto lauf_type = codegen_type(type);
-            codegen_expr(ctx, e);
+            codegen_expr(ctx, b, e);
             lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
             lauf_asm_inst_store_field(b, *lauf_type, 0);
         }
         else
         {
             lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
-            codegen_init(ctx, type, e);
+            codegen_init(ctx, b, type, e);
         }
 
         lauf_asm_inst_return(b);
@@ -802,9 +801,9 @@ void codegen_global_init(context& ctx, lauf_asm_global* global, const clauf::var
 }
 
 // Initializes the object whose address is on top of the stack.
-void codegen_init(context& ctx, const clauf::type* type, const clauf::init* init)
+void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
+                  const clauf::init* init)
 {
-    auto b = ctx.builder;
     if (auto lauf_type = codegen_type(type))
     {
         // Evaluate the initializer to a single stack value.
@@ -815,7 +814,7 @@ void codegen_init(context& ctx, const clauf::type* type, const clauf::init* init
             [&](const clauf::braced_init*) {
                 // No need to do anything, the children push the value.
             },
-            [&](const clauf::expr_init* init) { codegen_expr(ctx, init->expression()); });
+            [&](const clauf::expr_init* init) { codegen_expr(ctx, b, init->expression()); });
 
         // Store it into the object.
         lauf_asm_inst_roll(b, 1);
@@ -833,21 +832,37 @@ void codegen_init(context& ctx, const clauf::type* type, const clauf::init* init
             },
             [&](const clauf::expr_init*) { CLAUF_UNREACHABLE("this is not valid C code"); },
             [&](const clauf::braced_init* init) {
-                for (auto elem_init : init->initializers())
+                // If we are currently doing constant evaluation, or if we can't evaluate the
+                // initializer at compile-time, we need to manually initialize each array element.
+                if (b == ctx.chunk_builder || !clauf::is_constant_init(init))
                 {
-                    lauf_asm_inst_pick(b, 0);
-                    codegen_init(ctx, array->element_type(), elem_init);
+                    for (auto elem_init : init->initializers())
+                    {
+                        lauf_asm_inst_pick(b, 0);
+                        codegen_init(ctx, b, array->element_type(), elem_init);
 
-                    lauf_asm_inst_uint(b, elem_layout.size);
-                    lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_add(
-                                                      LAUF_LIB_MEMORY_ADDR_OVERFLOW_PANIC));
+                        lauf_asm_inst_uint(b, elem_layout.size);
+                        lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_add(
+                                                          LAUF_LIB_MEMORY_ADDR_OVERFLOW_PANIC));
+                    }
+
+                    if (init->trailing_empty_inits() > 0)
+                    {
+                        lauf_asm_inst_uint(b, 0);
+                        lauf_asm_inst_uint(b, init->trailing_empty_inits() * elem_layout.size);
+                        lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
+                    }
                 }
-
-                if (init->trailing_empty_inits() > 0)
+                else
                 {
-                    lauf_asm_inst_uint(b, 0);
-                    lauf_asm_inst_uint(b, init->trailing_empty_inits() * elem_layout.size);
-                    lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
+                    // Otherwise, we can evaluate initializer, store it as global memory,
+                    // and copy the values over.
+                    auto bytes = constant_eval(ctx, type, init);
+
+                    auto data = lauf_asm_build_data_literal(b, bytes.data(), bytes.size());
+                    lauf_asm_inst_global_addr(b, data);
+                    lauf_asm_inst_uint(b, array->size() * elem_layout.size);
+                    lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
                 }
             });
     }
@@ -866,7 +881,7 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     for (auto param : decl->parameters())
         params.push_back(param);
 
-    auto b = ctx.builder;
+    auto b = ctx.body_builder;
     lauf_asm_build(b, ctx.mod, fn);
 
     // We create variables for all parameters and store the value into them.
@@ -1005,13 +1020,13 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
                 if (decl->has_initializer())
                 {
                     lauf_asm_inst_local_addr(b, var);
-                    codegen_init(ctx, decl->type(), decl->initializer());
+                    codegen_init(ctx, b, decl->type(), decl->initializer());
                 }
             }
         },
         //=== expression ===//
         [&](dryad::child_visitor<clauf::node_kind>, const clauf::expr* expr) {
-            codegen_expr(ctx, expr);
+            codegen_expr(ctx, b, expr);
         });
 
     lauf_asm_build_debug_location(b, {0, 0, true});
@@ -1029,7 +1044,8 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
 clauf::codegen::codegen(lauf_vm* vm, diagnostic_logger& logger, const file& f,
                         const ast_symbol_interner& sym)
 : _vm(vm), _logger(&logger), _file(&f), _symbols(&sym), _mod(lauf_asm_create_module("main module")),
-  _builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
+  _body_builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
+  _chunk_builder(lauf_asm_create_builder(lauf_asm_default_build_options)),
   _consteval_chunk(lauf_asm_create_chunk(_mod)),
   _consteval_result_global(lauf_asm_add_global(_mod, LAUF_ASM_GLOBAL_READ_WRITE))
 {
@@ -1055,9 +1071,16 @@ void clauf::codegen::declare_global(const variable_decl* decl)
     {
         // For an constexpr global, we need to set its value immediately, as it can be accessed
         // during integer constant evaluation.
-        context ctx{_vm,      _logger,          _file,
-                    _mod,     _consteval_chunk, _consteval_result_global,
-                    _builder, &_globals,        &_functions,
+        context ctx{_vm,
+                    _logger,
+                    _file,
+                    _mod,
+                    _consteval_chunk,
+                    _consteval_result_global,
+                    _body_builder,
+                    _chunk_builder,
+                    &_globals,
+                    &_functions,
                     {}};
         codegen_global_init(ctx, global, decl);
     }
@@ -1086,8 +1109,17 @@ try
     if (auto integer = dryad::node_try_cast<clauf::integer_constant_expr>(expr))
         return std::size_t(integer->value());
 
-    context ctx{_vm,      _logger,   _file,       _mod, _consteval_chunk, _consteval_result_global,
-                _builder, &_globals, &_functions, {}};
+    context ctx{_vm,
+                _logger,
+                _file,
+                _mod,
+                _consteval_chunk,
+                _consteval_result_global,
+                _body_builder,
+                _chunk_builder,
+                &_globals,
+                &_functions,
+                {}};
 
     lauf_runtime_value result;
     constant_eval_impl(&result, ctx, expr->type(), expr);
@@ -1101,8 +1133,17 @@ catch (std::runtime_error&)
 lauf_asm_module* clauf::codegen::finish(const ast& ast) &&
 try
 {
-    context ctx{_vm,      _logger,   _file,       _mod, _consteval_chunk, _consteval_result_global,
-                _builder, &_globals, &_functions, {}};
+    context ctx{_vm,
+                _logger,
+                _file,
+                _mod,
+                _consteval_chunk,
+                _consteval_result_global,
+                _body_builder,
+                _chunk_builder,
+                &_globals,
+                &_functions,
+                {}};
 
     // Generate body for all lauf declarations.
     dryad::visit_tree(
