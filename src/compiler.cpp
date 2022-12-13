@@ -1789,7 +1789,8 @@ struct declaration
 
     static clauf::decl* create_non_init_declaration(compiler_state& state, const char* pos,
                                                     type_with_specs          ty_spec,
-                                                    const clauf::declarator* declarator)
+                                                    const clauf::declarator* declarator,
+                                                    std::size_t              initializer_count)
     {
         auto name = get_name(declarator);
         auto type = get_type(state.ast.types, declarator, ty_spec.type);
@@ -1802,6 +1803,15 @@ struct declaration
                 .finish();
 
             throw fatal_error();
+        }
+
+        if (auto array = dryad::node_try_cast<clauf::array_type>(type);
+            array != nullptr && array->is_incomplete() && initializer_count > 0)
+        {
+            type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
+                auto element_type = clauf::clone(creator, array->element_type());
+                return creator.create<clauf::array_type>(element_type, initializer_count);
+            });
         }
 
         auto default_linkage
@@ -1825,6 +1835,15 @@ struct declaration
         }
 
         auto create_var = [&] {
+            if (!clauf::is_complete_object_type(type))
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
+                    .annotation(clauf::annotation_kind::primary, name.loc,
+                                "used to declare variable here")
+                    .finish();
+            }
+
             if (ty_spec.storage_duration == clauf::storage_duration::register_
                 && ty_spec.linkage.value_or(default_linkage) != clauf::linkage::none)
             {
@@ -1852,18 +1871,7 @@ struct declaration
             return var;
         };
         return dryad::visit_node_all(
-            declarator,
-            [&](const clauf::name_declarator*) -> clauf::decl* {
-                if (!clauf::is_complete_object_type(type))
-                {
-                    state.logger
-                        .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
-                        .annotation(clauf::annotation_kind::primary, name.loc,
-                                    "used to declare variable here")
-                        .finish();
-                }
-                return create_var();
-            },
+            declarator, [&](const clauf::name_declarator*) -> clauf::decl* { return create_var(); },
             [&](const clauf::pointer_declarator*) -> clauf::decl* { return create_var(); },
             [&](const clauf::array_declarator*) -> clauf::decl* { return create_var(); },
             [&](const clauf::function_declarator* decl) -> clauf::decl* {
@@ -1893,7 +1901,9 @@ struct declaration
         {
             if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
             {
-                auto decl     = create_non_init_declaration(state, pos, ty_stor, init->child());
+                auto decl
+                    = create_non_init_declaration(state, pos, ty_stor, init->child(),
+                                                  clauf::initializer_count_of(init->initializer()));
                 auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
 
                 verify_init(state, state.ast.input.location_of(decl), decl->type(),
@@ -1922,7 +1932,7 @@ struct declaration
             }
             else
             {
-                result.push_back(create_non_init_declaration(state, pos, ty_stor, declarator));
+                result.push_back(create_non_init_declaration(state, pos, ty_stor, declarator, 0));
             }
         }
 

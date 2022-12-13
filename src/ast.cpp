@@ -4,6 +4,7 @@
 #include <clauf/ast.hpp>
 
 #include <cstdio>
+#include <iterator>
 
 clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
 {
@@ -445,6 +446,17 @@ bool clauf::is_constant_init(const init* init)
             return true;
         },
         [](const expr_init* init) { return is_constant_expr(init->expression()); });
+}
+
+std::size_t clauf::initializer_count_of(const init* init)
+{
+    return dryad::visit_node_all(
+        init, [](const empty_init*) { return 0u; },
+        [](const braced_init* init) {
+            return std::size_t(
+                std::distance(init->initializers().begin(), init->initializers().end()));
+        },
+        [](const expr_init*) { return 0u; });
 }
 
 clauf::name clauf::get_name(const declarator* decl)

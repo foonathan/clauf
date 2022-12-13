@@ -915,6 +915,8 @@ private:
 };
 
 bool is_constant_init(const init* init);
+
+std::size_t initializer_count_of(const init* init);
 } // namespace clauf
 
 //=== declaration ===//
