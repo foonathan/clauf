@@ -58,4 +58,15 @@ int main()
         __clauf_assert(ptr[4] == 0);
         __clauf_assert(ptr[5] == 0);
     }
+    {
+        int array[][3][2] = {{{1, 2}, {3, 4}}};
+
+        int* ptr = &array[0][0][0];
+        __clauf_assert(ptr[0] == 1);
+        __clauf_assert(ptr[1] == 2);
+        __clauf_assert(ptr[2] == 3);
+        __clauf_assert(ptr[3] == 4);
+        __clauf_assert(ptr[4] == 0);
+        __clauf_assert(ptr[5] == 0);
+    }
 }
