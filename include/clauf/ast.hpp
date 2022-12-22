@@ -245,6 +245,7 @@ enum class node_kind
     //=== expressions ===//
     nullptr_constant_expr,
     integer_constant_expr,
+    string_literal_expr,
     type_constant_expr,
     builtin_expr,
     identifier_expr,
@@ -425,6 +426,22 @@ public:
 
 private:
     std::uint64_t _value;
+};
+
+class string_literal_expr : public dryad::basic_node<node_kind::string_literal_expr, expr>
+{
+public:
+    explicit string_literal_expr(dryad::node_ctor ctor, const clauf::type* ty, const char* value)
+    : node_base(ctor, ty), _value(value)
+    {}
+
+    const char* value() const
+    {
+        return _value;
+    }
+
+private:
+    const char* _value;
 };
 
 /// A sizeof or alignof expression.

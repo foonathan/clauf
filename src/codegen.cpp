@@ -261,6 +261,11 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
         [&](const clauf::unary_expr* expr) {
             // To evaluate a pointer as an lvalue, we don't actually want to dereference it.
             codegen_expr(ctx, b, expr->child());
+        },
+        [&](const clauf::string_literal_expr* expr) {
+            // Get the address of the global that contains the string literal.
+            auto str = lauf_asm_build_string_literal(b, expr->value());
+            lauf_asm_inst_global_addr(b, str);
         });
 }
 
@@ -277,6 +282,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             // Pushes the value of the expression onto the stack.
             lauf_asm_inst_uint(b, expr->value());
         },
+        [&](const clauf::string_literal_expr* expr) { codegen_lvalue(ctx, b, expr); },
         [&](const clauf::type_constant_expr* expr) {
             auto layout = codegen_layout(expr->operand_type());
             switch (expr->op())

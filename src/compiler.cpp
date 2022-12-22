@@ -494,6 +494,27 @@ struct character_constant_expr
           });
 };
 
+struct string_literal_expr
+{
+    static constexpr auto rule = dsl::position(
+        dsl::quoted(dsl::unicode::character - dsl::unicode::control, escape_sequence));
+
+    static constexpr auto value
+        = lexy::as_string<std::string, lexy::utf8_char_encoding> >> callback<
+              clauf::string_literal_expr*>([](compiler_state& state, const char* pos,
+                                              const std::string& str) {
+              auto value
+                  = state.ast.symbols.intern(str.data(), str.length()).c_str(state.ast.symbols);
+
+              auto type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
+                  auto element_type
+                      = creator.create<clauf::builtin_type>(clauf::builtin_type::char_);
+                  return creator.create<clauf::array_type>(element_type, str.length() + 1);
+              });
+              return state.ast.create<clauf::string_literal_expr>(pos, type, value);
+          });
+};
+
 struct integer_constant_expr
 {
     template <typename Base>
@@ -665,7 +686,8 @@ struct expr : lexy::expression_production
     static constexpr auto atom
         = [] {
               auto id       = dsl::p<identifier_expr>;
-              auto constant = dsl::p<nullptr_constant_expr> | dsl::p<character_constant_expr> //
+              auto constant = dsl::p<nullptr_constant_expr>                                   //
+                              | dsl::p<character_constant_expr> | dsl::p<string_literal_expr> //
                               | dsl::else_ >> dsl::p<integer_constant_expr>;
 
               // When we have a '(' in the beginning of an expression, it can be either (expr) or

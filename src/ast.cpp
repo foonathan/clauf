@@ -239,7 +239,8 @@ unsigned clauf::integer_rank_of(const type* ty)
 
 bool clauf::is_lvalue(const expr* e)
 {
-    if (dryad::node_has_kind<clauf::identifier_expr>(e))
+    if (dryad::node_has_kind<clauf::identifier_expr>(e)
+        || dryad::node_has_kind<clauf::string_literal_expr>(e))
         return true;
     else if (auto unary = dryad::node_try_cast<clauf::unary_expr>(e))
         return unary->op() == clauf::unary_op::deref;
@@ -264,6 +265,8 @@ bool clauf::is_lvalue_with_address(const expr* e)
     }
     else if (auto unary = dryad::node_try_cast<clauf::unary_expr>(e))
         return unary->op() == clauf::unary_op::deref;
+    else if (dryad::node_has_kind<clauf::string_literal_expr>(e))
+        return true;
     else
         return false;
 }
@@ -277,6 +280,8 @@ bool clauf::is_static_lvalue(const expr* e)
         else if (dryad::node_has_kind<function_decl>(id->declaration()))
             return true;
     }
+    else if (dryad::node_has_kind<clauf::string_literal_expr>(e))
+        return true;
 
     return false;
 }
@@ -321,6 +326,7 @@ bool clauf::is_arithmetic_constant_expr(const expr* e)
     return dryad::visit_node_all(
         e, [](const nullptr_constant_expr*) { return false; },
         [](const integer_constant_expr*) { return true; },
+        [](const string_literal_expr*) { return false; },
         [](const type_constant_expr*) { return true; }, [](const builtin_expr*) { return false; },
         [](const identifier_expr* e) { return is_named_constant(e); },
         [](const function_call_expr*) { return false; },
@@ -543,6 +549,8 @@ const char* to_string(clauf::node_kind kind)
         return "nullptr constant expr";
     case clauf::node_kind::integer_constant_expr:
         return "integer constant expr";
+    case clauf::node_kind::string_literal_expr:
+        return "string literal expr";
     case clauf::node_kind::type_constant_expr:
         return "type constant expr";
     case clauf::node_kind::builtin_expr:
@@ -682,6 +690,10 @@ void clauf::dump_ast(const ast& ast)
             //=== expr ===//
             [&](const integer_constant_expr* expr) {
                 std::printf("%ld : ", expr->value());
+                dump_type(expr->type());
+            },
+            [&](const string_literal_expr* expr) {
+                std::printf("'%s' : ", expr->value());
                 dump_type(expr->type());
             },
             [&](const type_constant_expr* expr) {
