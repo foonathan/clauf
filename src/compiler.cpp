@@ -456,6 +456,44 @@ struct nullptr_constant_expr
           });
 };
 
+constexpr auto simple_escape_sequence = lexy::symbol_table<char> //
+                                            .map<'\''>('\'')
+                                            .map<'"'>('"')
+                                            .map<'?'>('?')
+                                            .map<'\\'>('\\')
+                                            .map<'a'>('\a')
+                                            .map<'b'>('\b')
+                                            .map<'f'>('\f')
+                                            .map<'n'>('\n')
+                                            .map<'r'>('\r')
+                                            .map<'t'>('\t')
+                                            .map<'v'>('\v');
+
+constexpr auto escape_sequence
+    = dsl::backslash_escape.symbol<simple_escape_sequence>()
+          .rule((dsl::lit_c<'u'>) >> dsl::code_point_id<4>)
+          .rule((dsl::lit_c<'U'>) >> dsl::code_point_id<8>)
+          .rule((dsl::lit_c<'x'>) >> dsl::integer<unsigned char, dsl::hex>)
+          .rule(dsl::peek(dsl::digit<dsl::octal>) >> dsl::integer<unsigned char, dsl::octal>);
+
+struct character_constant_expr
+{
+    static constexpr auto rule = dsl::position(
+        dsl::single_quoted(dsl::unicode::character - dsl::unicode::control, escape_sequence));
+
+    static constexpr auto value
+        = lexy::as_string<std::string, lexy::utf8_char_encoding> >> callback<
+              clauf::integer_constant_expr*>([](compiler_state& state, const char* pos,
+                                                const std::string& str) {
+              auto value = str[0];
+              return state.ast
+                  .create<clauf::integer_constant_expr>(pos,
+                                                        state.ast.create(
+                                                            clauf::builtin_type::sint64),
+                                                        value);
+          });
+};
+
 struct integer_constant_expr
 {
     template <typename Base>
@@ -626,9 +664,9 @@ struct expr : lexy::expression_production
     // primary-expression
     static constexpr auto atom
         = [] {
-              auto id = dsl::p<identifier_expr>;
-              auto constant
-                  = dsl::p<nullptr_constant_expr> | dsl::else_ >> dsl::p<integer_constant_expr>;
+              auto id       = dsl::p<identifier_expr>;
+              auto constant = dsl::p<nullptr_constant_expr> | dsl::p<character_constant_expr> //
+                              | dsl::else_ >> dsl::p<integer_constant_expr>;
 
               // When we have a '(' in the beginning of an expression, it can be either (expr) or
               // (type)expr. This can be distinguished by checking for a type name after the '(',
@@ -647,8 +685,10 @@ struct expr : lexy::expression_production
               // however.
               //
               // Parse (type-name) or (expr) as operand of sizeof.
-              auto type_constant_operand_parens = dsl::parenthesized.open() >>  //
-                  (dsl::p<type_name_in_parens> | dsl::else_ >> dsl::recurse<expr> + dsl::parenthesized.close());
+              auto type_constant_operand_parens
+            = dsl::parenthesized.open() >> //
+              (dsl::p<
+                   type_name_in_parens> | dsl::else_ >> dsl::recurse<expr> + dsl::parenthesized.close());
               auto type_constant_expr
                   = dsl::position(dsl::symbol<kw_type_ops>)
                     >> (type_constant_operand_parens | dsl::else_ >> dsl::recurse<unary_expr>);
