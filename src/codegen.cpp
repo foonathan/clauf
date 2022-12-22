@@ -111,8 +111,8 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             // The offset is on top of the stack, as we normalized the expr.
             // Multiply it by the size of the type.
             auto pointee_type
-                = codegen_type(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
-            lauf_asm_inst_uint(b, pointee_type->layout.size);
+                = codegen_layout(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
+            lauf_asm_inst_uint(b, pointee_type.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
 
             // Offset the pointer.
@@ -132,8 +132,8 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             // The offset is on top of the stack, as we normalized the expr.
             // Multiply it by the size of the type.
             auto pointee_type
-                = codegen_type(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
-            lauf_asm_inst_uint(b, pointee_type->layout.size);
+                = codegen_layout(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
+            lauf_asm_inst_uint(b, pointee_type.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
 
             // Offset the pointer.
