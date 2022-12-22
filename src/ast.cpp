@@ -143,6 +143,15 @@ bool clauf::is_unsigned_int(const type* ty_)
         return false;
     }
 }
+bool clauf::is_char(const type* ty_)
+{
+    auto ty      = clauf::unqualified_type_of(ty_);
+    auto builtin = dryad::node_try_cast<clauf::builtin_type>(ty);
+    if (builtin == nullptr)
+        return false;
+
+    return builtin->type_kind() == clauf::builtin_type::char_;
+}
 bool clauf::is_integer(const type* ty)
 {
     return is_signed_int(ty) || is_unsigned_int(ty);

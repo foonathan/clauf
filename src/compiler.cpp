@@ -1823,7 +1823,16 @@ void verify_init(compiler_state& state, clauf::location loc, const clauf::type* 
     {
         dryad::visit_node_all(
             init, [](clauf::empty_init*) {},
-            [&](clauf::expr_init*) {
+            [&](clauf::expr_init* init) {
+                if (auto decay = dryad::node_try_cast<clauf::decay_expr>(init->expression()))
+                {
+                    // TODO: also allow types compatible with char
+                    if (auto string
+                        = dryad::node_try_cast<clauf::string_literal_expr>(decay->child());
+                        string != nullptr && clauf::is_char(array->element_type()))
+                        return;
+                }
+
                 state.logger
                     .log(clauf::diagnostic_kind::error, "cannot initialize array from expression")
                     .annotation(clauf::annotation_kind::primary, loc, "here")

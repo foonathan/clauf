@@ -837,7 +837,21 @@ void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
                 lauf_asm_inst_uint(b, array->size() * elem_layout.size);
                 lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
             },
-            [&](const clauf::expr_init*) { CLAUF_UNREACHABLE("this is not valid C code"); },
+            [&](const clauf::expr_init* init) {
+                // We know that this is a string literal.
+                auto str_literal = dryad::node_cast<clauf::string_literal_expr>(
+                    dryad::node_cast<clauf::decay_expr>(init->expression())->child());
+                auto str_length = std::strlen(str_literal->value()) + 1;
+                auto str        = lauf_asm_build_string_literal(b, str_literal->value());
+
+                // TODO: memset rest to zero.
+                lauf_asm_inst_global_addr(b, str);
+                if (str_length < array->size() * elem_layout.size)
+                    lauf_asm_inst_uint(b, str_length);
+                else
+                    lauf_asm_inst_uint(b, array->size() * elem_layout.size);
+                lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
+            },
             [&](const clauf::braced_init* init) {
                 // If we are currently doing constant evaluation, or if we can't evaluate the
                 // initializer at compile-time, we need to manually initialize each array element.

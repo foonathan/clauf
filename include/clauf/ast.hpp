@@ -219,6 +219,7 @@ bool is_same_modulo_qualifiers(const type* lhs, const type* rhs);
 bool is_void(const type* ty);
 bool is_signed_int(const type* ty);
 bool is_unsigned_int(const type* ty);
+bool is_char(const type* ty);
 bool is_integer(const type* ty);
 bool is_arithmetic(const type* ty);
 bool is_pointer(const type* ty);
