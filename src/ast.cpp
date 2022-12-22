@@ -497,14 +497,17 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
             });
         },
         [&](const clauf::array_declarator* decl) -> const clauf::type* {
-            auto element_type = get_type(types, decl->child(), decl_type);
+            auto element_type = decl_type;
             if (element_type == nullptr || !clauf::is_complete_object_type(element_type))
                 return nullptr;
 
-            return types.build([&](clauf::type_forest::node_creator creator) {
-                return creator.create<clauf::array_type>(clauf::clone(creator, element_type),
+            // We need to process array declarators from the inside-out,
+            // so we first add our declarator, then process towards the child.
+            auto outer_array = types.build([&](clauf::type_forest::node_creator creator) {
+                return creator.create<clauf::array_type>(clauf::clone(creator, decl_type),
                                                          decl->size());
             });
+            return get_type(types, decl->child(), outer_array);
         },
         [&](const clauf::function_declarator* decl) {
             return types.build([&](clauf::type_forest::node_creator creator) -> clauf::type* {
@@ -590,7 +593,6 @@ const char* to_string(clauf::node_kind kind)
         return "function decl";
     }
 }
-
 } // namespace
 
 void clauf::dump_type(const clauf::type* ty)
