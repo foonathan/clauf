@@ -39,6 +39,9 @@ public:
         void_,
         nullptr_t,
 
+        // Unsigned character type char.
+        char_,
+
         sint8,
         uint8,
         sint16,

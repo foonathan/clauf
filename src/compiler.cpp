@@ -224,6 +224,7 @@ clauf::expr* do_integer_promotion(compiler_state& state, clauf::location loc, cl
             CLAUF_UNREACHABLE("not an integer");
             return nullptr;
 
+        case clauf::builtin_type::char_:
         case clauf::builtin_type::sint8:
         case clauf::builtin_type::uint8:
         case clauf::builtin_type::sint16:
@@ -1417,8 +1418,7 @@ struct decl_specifier_list
                     case decl_specifier::char_:
                         if (base_type.has_value())
                             log_error();
-                        // TODO: set base type to char, not signed char
-                        base_type = clauf::builtin_type::sint8;
+                        base_type = clauf::builtin_type::char_;
                         break;
                     case decl_specifier::signed_:
                         if (is_signed.has_value())
@@ -1470,11 +1470,13 @@ struct decl_specifier_list
                         return state.ast.types.lookup_or_create<clauf::builtin_type>(
                             clauf::builtin_type::void_);
 
-                    case builtin_type::sint8:
+                    case builtin_type::char_:
                         if (short_count > 0)
                             log_error();
 
-                        if (is_signed.value_or(true))
+                        if (!is_signed.has_value())
+                            return state.ast.create(clauf::builtin_type::char_);
+                        else if (is_signed.value())
                             return state.ast.create(clauf::builtin_type::sint8);
                         else
                             return state.ast.create(clauf::builtin_type::uint8);

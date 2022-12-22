@@ -57,6 +57,7 @@ clauf::type* clauf::make_unsigned(type_forest::node_creator creator, const type*
         return creator.create<clauf::builtin_type>(clauf::builtin_type::uint64);
 
     case clauf::builtin_type::void_:
+    case clauf::builtin_type::char_:
     case clauf::builtin_type::nullptr_t:
         return nullptr;
     }
@@ -109,6 +110,7 @@ bool clauf::is_signed_int(const type* ty_)
 
     case builtin_type::void_:
     case builtin_type::nullptr_t:
+    case builtin_type::char_:
     case builtin_type::uint8:
     case builtin_type::uint16:
     case builtin_type::uint32:
@@ -129,6 +131,7 @@ bool clauf::is_unsigned_int(const type* ty_)
     case builtin_type::uint16:
     case builtin_type::uint32:
     case builtin_type::uint64:
+    case builtin_type::char_:
         return true;
 
     case builtin_type::void_:
@@ -213,6 +216,7 @@ unsigned clauf::integer_rank_of(const type* ty)
     {
     case clauf::builtin_type::sint8:
     case clauf::builtin_type::uint8:
+    case clauf::builtin_type::char_:
         return 8;
 
     case clauf::builtin_type::sint16:
@@ -607,6 +611,9 @@ void clauf::dump_type(const clauf::type* ty)
                 break;
             case clauf::builtin_type::nullptr_t:
                 std::printf("nullptr_t");
+                break;
+            case clauf::builtin_type::char_:
+                std::printf("char");
                 break;
             case clauf::builtin_type::sint8:
                 std::printf("sint8");
