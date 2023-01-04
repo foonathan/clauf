@@ -737,7 +737,7 @@ void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const
     auto chunk = ctx.consteval_chunk;
     {
         auto b = ctx.chunk_builder;
-        lauf_asm_build_chunk(b, ctx.mod, chunk, 0);
+        lauf_asm_build_chunk(b, ctx.mod, chunk, {0, 0});
 
         if constexpr (std::is_same_v<ExprOrInit, clauf::expr>)
         {
@@ -760,10 +760,7 @@ void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const
     // We then execute that chunk.
     {
         auto program = lauf_asm_create_program_from_chunk(ctx.mod, chunk);
-
-        lauf_asm_native result_native_global;
-        lauf_asm_define_native_global(&result_native_global, &program, ctx.consteval_result_global,
-                                      data, layout.size);
+        lauf_asm_define_native_global(&program, ctx.consteval_result_global, data, layout.size);
 
         struct ph_data_t
         {
