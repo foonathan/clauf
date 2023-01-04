@@ -243,6 +243,8 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
     }
 }
 
+void* argument_ptrs[32];
+
 // This builtin takes two arguments:
 // * vstack_ptr[0] is the native address of the ffi_function
 // * vstack_ptr[1] is an address to an array of pointers to the actual arguments
@@ -253,20 +255,18 @@ LAUF_RUNTIME_BUILTIN(call_native, 3, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "call_nati
     auto argument_array_address = vstack_ptr[1].as_address;
     auto return_address         = vstack_ptr[2].as_address;
 
-    std::vector<void*> argument_ptrs;
-    auto               argument_addresses = static_cast<lauf_runtime_value*>(
+    CLAUF_ASSERT(ffi_function->cif.nargs < 32, "too many arguments");
+    auto argument_addresses = static_cast<lauf_runtime_value*>(
         lauf_runtime_get_mut_ptr(process, argument_array_address, {1, 1}));
     for (auto i = 0u; i != ffi_function->cif.nargs; ++i)
-    {
-        auto ptr = lauf_runtime_get_mut_ptr(process, argument_addresses[i].as_address, {1, 1});
-        argument_ptrs.push_back(ptr);
-    }
+        argument_ptrs[i]
+            = lauf_runtime_get_mut_ptr(process, argument_addresses[i].as_address, {1, 1});
 
     ffi_call(&ffi_function->cif, reinterpret_cast<void (*)()>(ffi_function->addr),
-             lauf_runtime_get_mut_ptr(process, return_address, {1, 1}), argument_ptrs.data());
+             lauf_runtime_get_mut_ptr(process, return_address, {1, 1}), argument_ptrs);
 
     vstack_ptr += 3;
-    return lauf_runtime_builtin_dispatch(ip, vstack_ptr, frame_ptr, process);
+    LAUF_RUNTIME_BUILTIN_DISPATCH;
 }
 
 struct context
