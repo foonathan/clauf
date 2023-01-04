@@ -20,6 +20,8 @@ jobs:
     - name: Create Build Environment
       run: cmake -E make_directory build
 
+    - name: Install dependencies
+      run: apt-get install -y pkg-config libffi-dev
     - name: Configure
       working-directory: build/
       run: cmake -GNinja $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=${{matrix.build_type}}
