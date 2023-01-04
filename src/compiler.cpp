@@ -339,7 +339,7 @@ enum class decl_specifier
     extern_,
     register_,
     static_,
-    lauf_native,
+    clauf_native,
 
     //=== type specifiers ===//
     void_,
@@ -360,19 +360,20 @@ constexpr auto kw_type_qualifiers = lexy::symbol_table<decl_specifier> //
                                         .map(LEXY_LIT("const"), decl_specifier::const_)
                                         .map(LEXY_LIT("volatile"), decl_specifier::volatile_)
                                         .map(LEXY_LIT("restrict"), decl_specifier::restrict_);
-constexpr auto kw_decl_specifiers = kw_type_qualifiers //
-                                        .map(LEXY_LIT("auto"), decl_specifier::auto_)
-                                        .map(LEXY_LIT("constexpr"), decl_specifier::constexpr_)
-                                        .map(LEXY_LIT("extern"), decl_specifier::extern_)
-                                        .map(LEXY_LIT("register"), decl_specifier::register_)
-                                        .map(LEXY_LIT("static"), decl_specifier::static_)
-                                        .map(LEXY_LIT("__lauf_native"), decl_specifier::lauf_native)
-                                        .map(LEXY_LIT("void"), decl_specifier::void_)
-                                        .map(LEXY_LIT("int"), decl_specifier::int_)
-                                        .map(LEXY_LIT("char"), decl_specifier::char_)
-                                        .map(LEXY_LIT("signed"), decl_specifier::signed_)
-                                        .map(LEXY_LIT("unsigned"), decl_specifier::unsigned_)
-                                        .map(LEXY_LIT("short"), decl_specifier::short_);
+constexpr auto kw_decl_specifiers
+    = kw_type_qualifiers //
+          .map(LEXY_LIT("auto"), decl_specifier::auto_)
+          .map(LEXY_LIT("constexpr"), decl_specifier::constexpr_)
+          .map(LEXY_LIT("extern"), decl_specifier::extern_)
+          .map(LEXY_LIT("register"), decl_specifier::register_)
+          .map(LEXY_LIT("static"), decl_specifier::static_)
+          .map(LEXY_LIT("__clauf_native"), decl_specifier::clauf_native)
+          .map(LEXY_LIT("void"), decl_specifier::void_)
+          .map(LEXY_LIT("int"), decl_specifier::int_)
+          .map(LEXY_LIT("char"), decl_specifier::char_)
+          .map(LEXY_LIT("signed"), decl_specifier::signed_)
+          .map(LEXY_LIT("unsigned"), decl_specifier::unsigned_)
+          .map(LEXY_LIT("short"), decl_specifier::short_);
 
 constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
@@ -1468,7 +1469,7 @@ struct decl_specifier_list
                         linkage          = clauf::linkage::internal;
                         storage_duration = clauf::storage_duration::static_;
                         break;
-                    case decl_specifier::lauf_native:
+                    case decl_specifier::clauf_native:
                         if (linkage.has_value())
                             log_error();
                         linkage = clauf::linkage::native;
