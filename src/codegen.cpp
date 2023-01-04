@@ -4,6 +4,7 @@
 #include <clauf/codegen.hpp>
 
 #include <cassert>
+#include <dlfcn.h>
 #include <dryad/node_map.hpp>
 #include <lauf/asm/builder.h>
 #include <lauf/asm/program.h>
@@ -198,10 +199,21 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
     }
 }
 
+LAUF_RUNTIME_BUILTIN(call_native, 1, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "call_native", nullptr)
+{
+    auto fn_addr = vstack_ptr[0].as_native_ptr;
+    auto fn_ptr  = reinterpret_cast<void (*)()>(fn_addr);
+    fn_ptr();
+
+    --vstack_ptr;
+    LAUF_RUNTIME_BUILTIN_DISPATCH;
+}
+
 struct context
 {
     lauf_vm*                                                               vm;
     clauf::diagnostic_logger*                                              logger;
+    const clauf::ast_symbol_interner*                                      symbols;
     const clauf::file*                                                     input;
     lauf_asm_module*                                                       mod;
     lauf_asm_chunk*                                                        consteval_chunk;
@@ -249,18 +261,12 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             }
             else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
             {
-                if (fn_decl->linkage() == clauf::linkage::native)
-                {
-                    // TODO
-                    lauf_asm_inst_uint(b, 42);
-                }
-                else
-                {
-                    // Push the address of the function onto the stack.
-                    auto fn = ctx.functions->lookup(fn_decl->definition());
-                    CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
-                    lauf_asm_inst_function_addr(b, *fn);
-                }
+                // Push the address of the function onto the stack.
+                auto fn = fn_decl->linkage() == clauf::linkage::native
+                              ? ctx.functions->lookup(fn_decl)
+                              : ctx.functions->lookup(fn_decl->definition());
+                CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
+                lauf_asm_inst_function_addr(b, *fn);
                 return;
             }
 
@@ -1068,6 +1074,30 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     lauf_asm_build_finish(b);
     return fn;
 }
+
+lauf_asm_function* codegen_native_trampoline(context& ctx, const clauf::function_decl* decl)
+{
+    auto fn        = *ctx.functions->lookup(decl);
+    ctx.local_vars = {};
+
+    std::vector<const clauf::parameter_decl*> params;
+    for (auto param : decl->parameters())
+        params.push_back(param);
+
+    auto b = ctx.body_builder;
+    lauf_asm_build(b, ctx.mod, fn);
+
+    // Find the native address of the function.
+    auto fn_addr = dlsym(RTLD_DEFAULT, decl->name().c_str(*ctx.symbols));
+    CLAUF_ASSERT(fn_addr != nullptr, "unknown native function");
+
+    lauf_asm_inst_bytes(b, &fn_addr);
+    lauf_asm_inst_call_builtin(b, call_native);
+    lauf_asm_inst_return(b);
+
+    lauf_asm_build_finish(b);
+    return fn;
+}
 } // namespace
 
 //=== codegen ===//
@@ -1103,6 +1133,7 @@ void clauf::codegen::declare_global(const variable_decl* decl)
         // during integer constant evaluation.
         context ctx{_vm,
                     _logger,
+                    _symbols,
                     _file,
                     _mod,
                     _consteval_chunk,
@@ -1118,7 +1149,7 @@ void clauf::codegen::declare_global(const variable_decl* decl)
 
 void clauf::codegen::declare_function(const function_decl* decl)
 {
-    if (!decl->is_definition())
+    if (!decl->is_definition() && decl->linkage() != clauf::linkage::native)
         return;
 
     auto parameter_count = std::distance(decl->parameters().begin(), decl->parameters().end());
@@ -1141,6 +1172,7 @@ try
 
     context ctx{_vm,
                 _logger,
+                _symbols,
                 _file,
                 _mod,
                 _consteval_chunk,
@@ -1165,6 +1197,7 @@ try
 {
     context ctx{_vm,
                 _logger,
+                _symbols,
                 _file,
                 _mod,
                 _consteval_chunk,
@@ -1190,6 +1223,8 @@ try
         [&](const function_decl* decl) {
             if (decl->is_definition())
                 codegen_function_body(ctx, decl);
+            else if (decl->linkage() == clauf::linkage::native)
+                codegen_native_trampoline(ctx, decl);
         });
 
     return ctx.mod;
