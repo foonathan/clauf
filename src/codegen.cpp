@@ -1148,7 +1148,6 @@ clauf::ffi_function* get_ffi_function(context& ctx, clauf::code& code,
 
     // Find the native address of the function.
     auto fn_addr = dlsym(RTLD_DEFAULT, decl->name().c_str(*ctx.symbols));
-    CLAUF_ASSERT(fn_addr != nullptr, "unknown native function");
 
     return code.add_ffi_function({cif, fn_addr, std::move(types)});
 }
@@ -1189,6 +1188,12 @@ lauf_asm_function* codegen_native_trampoline(context& ctx, clauf::code& code,
     }
 
     auto ffi_function = get_ffi_function(ctx, code, decl);
+    if (ffi_function->addr == nullptr)
+    {
+        auto msg = lauf_asm_build_string_literal(b, "undefined reference to native function");
+        lauf_asm_inst_global_addr(b, msg);
+        lauf_asm_inst_panic(b);
+    }
 
     if (clauf::is_void(decl->type()->return_type()))
     {
