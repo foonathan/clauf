@@ -948,6 +948,7 @@ enum class linkage : std::uint16_t
     none,
     external,
     internal,
+    native,
 };
 
 /// The baseclass of all declarations in the AST.

@@ -925,6 +925,9 @@ void clauf::dump_ast(const ast& ast)
                 case linkage::internal:
                     std::printf("internal ");
                     break;
+                case linkage::native:
+                    std::printf("native ");
+                    break;
                 }
                 std::printf("'%s' : ", d->name().c_str(ast.symbols));
                 dump_type(d->type());

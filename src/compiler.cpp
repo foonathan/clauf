@@ -339,6 +339,7 @@ enum class decl_specifier
     extern_,
     register_,
     static_,
+    lauf_native,
 
     //=== type specifiers ===//
     void_,
@@ -365,6 +366,7 @@ constexpr auto kw_decl_specifiers = kw_type_qualifiers //
                                         .map(LEXY_LIT("extern"), decl_specifier::extern_)
                                         .map(LEXY_LIT("register"), decl_specifier::register_)
                                         .map(LEXY_LIT("static"), decl_specifier::static_)
+                                        .map(LEXY_LIT("__lauf_native"), decl_specifier::lauf_native)
                                         .map(LEXY_LIT("void"), decl_specifier::void_)
                                         .map(LEXY_LIT("int"), decl_specifier::int_)
                                         .map(LEXY_LIT("char"), decl_specifier::char_)
@@ -1465,6 +1467,11 @@ struct decl_specifier_list
                             log_error();
                         linkage          = clauf::linkage::internal;
                         storage_duration = clauf::storage_duration::static_;
+                        break;
+                    case decl_specifier::lauf_native:
+                        if (linkage.has_value())
+                            log_error();
+                        linkage = clauf::linkage::native;
                         break;
 
                     case decl_specifier::void_:

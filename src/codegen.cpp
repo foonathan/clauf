@@ -249,10 +249,18 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             }
             else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
             {
-                // Push the address of the function onto the stack.
-                auto fn = ctx.functions->lookup(fn_decl->definition());
-                CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
-                lauf_asm_inst_function_addr(b, *fn);
+                if (fn_decl->linkage() == clauf::linkage::native)
+                {
+                    // TODO
+                    lauf_asm_inst_uint(b, 42);
+                }
+                else
+                {
+                    // Push the address of the function onto the stack.
+                    auto fn = ctx.functions->lookup(fn_decl->definition());
+                    CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
+                    lauf_asm_inst_function_addr(b, *fn);
+                }
                 return;
             }
 
