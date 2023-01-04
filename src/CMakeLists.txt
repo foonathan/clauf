@@ -30,13 +30,16 @@ file(DOWNLOAD
         https://github.com/CLIUtils/CLI11/releases/download/v2.2.0/CLI11.hpp
         ${CMAKE_CURRENT_BINARY_DIR}/CLI11.hpp)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(libffi REQUIRED IMPORTED_TARGET libffi)
+
 #=== main executable ===#
 add_executable(clauf)
 target_sources(clauf PRIVATE ${source_files})
 target_compile_features(clauf PRIVATE cxx_std_17)
 target_include_directories(clauf PRIVATE ../include)
 target_include_directories(clauf SYSTEM PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf foonathan::dryad)
+target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf foonathan::dryad PkgConfig::libffi)
 
 if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
     if("${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
