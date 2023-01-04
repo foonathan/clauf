@@ -39,7 +39,7 @@ target_sources(clauf PRIVATE ${source_files})
 target_compile_features(clauf PRIVATE cxx_std_17)
 target_include_directories(clauf PRIVATE ../include)
 target_include_directories(clauf SYSTEM PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf foonathan::dryad PkgConfig::libffi)
+target_link_libraries(clauf PRIVATE foonathan::lexy foonathan::lauf foonathan::dryad PkgConfig::libffi ${CMAKE_DL_LIBS})
 
 if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
     if("${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
