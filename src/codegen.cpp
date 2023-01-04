@@ -34,11 +34,11 @@ const lauf_asm_type* codegen_lauf_type(const clauf::type* ty)
 {
     return dryad::visit_node_all(
         ty,
-        [](const clauf::builtin_type* ty) {
+        [](const clauf::builtin_type* ty) -> const lauf_asm_type* {
             switch (ty->type_kind())
             {
             case clauf::builtin_type::void_:
-                CLAUF_UNREACHABLE("not needed in lauf");
+                return nullptr;
             case clauf::builtin_type::nullptr_t:
                 return &lauf_asm_type_value;
 
@@ -244,25 +244,28 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
 }
 
 // This builtin takes two arguments:
-// * vstack_ptr[0] is an address to an array of pointers to the actual arguments
-// * vstack_ptr[1] is the native address of the ffi_function
-LAUF_RUNTIME_BUILTIN(call_native, 2, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "call_native", nullptr)
+// * vstack_ptr[0] is the native address of the ffi_function
+// * vstack_ptr[1] is an address to an array of pointers to the actual arguments
+// * vstack_ptr[2] is an address to store the return value into
+LAUF_RUNTIME_BUILTIN(call_native, 3, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "call_native", nullptr)
 {
-    auto ffi_function = static_cast<clauf::ffi_function*>(vstack_ptr[1].as_native_ptr);
+    auto ffi_function           = static_cast<clauf::ffi_function*>(vstack_ptr[0].as_native_ptr);
+    auto argument_array_address = vstack_ptr[1].as_address;
+    auto return_address         = vstack_ptr[2].as_address;
 
     std::vector<void*> argument_ptrs;
     auto               argument_addresses = static_cast<lauf_runtime_value*>(
-        lauf_runtime_get_mut_ptr(process, vstack_ptr[0].as_address, {1, 1}));
+        lauf_runtime_get_mut_ptr(process, argument_array_address, {1, 1}));
     for (auto i = 0u; i != ffi_function->cif.nargs; ++i)
     {
         auto ptr = lauf_runtime_get_mut_ptr(process, argument_addresses[i].as_address, {1, 1});
         argument_ptrs.push_back(ptr);
     }
 
-    ffi_call(&ffi_function->cif, reinterpret_cast<void (*)()>(ffi_function->addr), nullptr,
-             argument_ptrs.data());
+    ffi_call(&ffi_function->cif, reinterpret_cast<void (*)()>(ffi_function->addr),
+             lauf_runtime_get_mut_ptr(process, return_address, {1, 1}), argument_ptrs.data());
 
-    vstack_ptr += 2;
+    vstack_ptr += 3;
     return lauf_runtime_builtin_dispatch(ip, vstack_ptr, frame_ptr, process);
 }
 
@@ -1140,7 +1143,8 @@ clauf::ffi_function* get_ffi_function(context& ctx, clauf::code& code,
         types.push_back(codegen_ffi_type(param->type()));
 
     ffi_cif cif;
-    ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 1, &ffi_type_void, types.data());
+    ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 1, codegen_ffi_type(decl->type()->return_type()),
+                 types.data());
 
     // Find the native address of the function.
     auto fn_addr = dlsym(RTLD_DEFAULT, decl->name().c_str(*ctx.symbols));
@@ -1185,9 +1189,27 @@ lauf_asm_function* codegen_native_trampoline(context& ctx, clauf::code& code,
     }
 
     auto ffi_function = get_ffi_function(ctx, code, decl);
-    lauf_asm_inst_bytes(b, &ffi_function);
-    lauf_asm_inst_local_addr(b, arguments);
-    lauf_asm_inst_call_builtin(b, call_native);
+
+    if (clauf::is_void(decl->type()->return_type()))
+    {
+        lauf_asm_inst_null(b);
+        lauf_asm_inst_local_addr(b, arguments);
+        lauf_asm_inst_bytes(b, &ffi_function);
+        lauf_asm_inst_call_builtin(b, call_native);
+    }
+    else
+    {
+        auto return_type  = codegen_lauf_type(decl->type()->return_type());
+        auto return_value = lauf_asm_build_local(b, return_type->layout);
+
+        lauf_asm_inst_local_addr(b, return_value);
+        lauf_asm_inst_local_addr(b, arguments);
+        lauf_asm_inst_bytes(b, &ffi_function);
+        lauf_asm_inst_call_builtin(b, call_native);
+
+        lauf_asm_inst_local_addr(b, return_value);
+        lauf_asm_inst_load_field(b, *return_type, 0);
+    }
     lauf_asm_inst_return(b);
 
     lauf_asm_build_finish(b);
