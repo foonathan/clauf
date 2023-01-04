@@ -5,14 +5,62 @@
 #define CLAUF_CODEGEN_HPP_INCLUDED
 
 #include <clauf/ast.hpp>
+#include <deque>
+#include <ffi.h>
 #include <lauf/asm/builder.h>
 #include <lauf/asm/module.h>
 #include <lauf/vm.h>
+#include <optional>
 #include <vector>
 
 namespace clauf
 {
 class diagnostic_logger;
+
+struct ffi_function
+{
+    ffi_cif                cif;
+    void*                  addr;
+    std::vector<ffi_type*> argument_types;
+};
+
+class code
+{
+public:
+    explicit code(lauf_asm_module* mod) : _module(mod) {}
+
+    ~code()
+    {
+        if (_module != nullptr)
+            lauf_asm_destroy_module(_module);
+    }
+
+    code(code&& other) noexcept : _module(other._module), _functions(std::move(other._functions))
+    {
+        other._module = nullptr;
+    }
+    code& operator=(code&& other) noexcept
+    {
+        std::swap(_module, other._module);
+        std::swap(_functions, other._functions);
+        return *this;
+    }
+
+    lauf_asm_module* module() const
+    {
+        return _module;
+    }
+
+    ffi_function* add_ffi_function(ffi_function fn)
+    {
+        _functions.push_back(std::move(fn));
+        return &_functions.back();
+    }
+
+private:
+    lauf_asm_module*         _module;
+    std::deque<ffi_function> _functions;
+};
 
 class codegen
 {
@@ -34,7 +82,7 @@ public:
 
     std::size_t constant_eval_integer_expr(const expr* expr);
 
-    lauf_asm_module* finish(const ast& ast) &&;
+    std::optional<code> finish(const ast& ast) &&;
 
 private:
     lauf_vm*                   _vm;

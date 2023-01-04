@@ -5,6 +5,7 @@
 #define CLAUF_COMPILER_HPP_INCLUDED
 
 #include <clauf/ast.hpp>
+#include <clauf/codegen.hpp>
 #include <lauf/asm/module.h>
 #include <lexy/input/buffer.hpp>
 #include <optional>
@@ -15,8 +16,8 @@ namespace clauf
 {
 struct compilation_result
 {
-    clauf::ast       ast;
-    lauf_asm_module* mod;
+    clauf::ast ast;
+    code       code;
 };
 
 /// If input is well-formed C (including name lookup and type checking), return its AST.

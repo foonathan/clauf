@@ -50,7 +50,7 @@ int main(const options& opts)
         std::putchar('\n');
     }
 
-    if (auto mod = result->mod)
+    if (auto mod = result->code.module())
     {
         if (opts.dump_bytecode)
         {
@@ -84,8 +84,6 @@ int main(const options& opts)
                 return 1;
             exit_code = static_cast<int>(return_code.as_sint);
         }
-
-        lauf_asm_destroy_module(mod);
     }
     lauf_destroy_vm(vm);
 

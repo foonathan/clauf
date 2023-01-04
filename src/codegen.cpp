@@ -6,6 +6,7 @@
 #include <cassert>
 #include <dlfcn.h>
 #include <dryad/node_map.hpp>
+#include <ffi.h>
 #include <lauf/asm/builder.h>
 #include <lauf/asm/program.h>
 #include <lauf/asm/type.h>
@@ -29,7 +30,7 @@
 //=== helper functions ===//
 namespace
 {
-const lauf_asm_type* codegen_type(const clauf::type* ty)
+const lauf_asm_type* codegen_lauf_type(const clauf::type* ty)
 {
     return dryad::visit_node_all(
         ty,
@@ -63,21 +64,64 @@ const lauf_asm_type* codegen_type(const clauf::type* ty)
         [](const clauf::pointer_type*) { return &lauf_asm_type_value; },
         [](const clauf::array_type*) { return nullptr; },
         [](const clauf::function_type*) { return nullptr; },
-        [](const clauf::qualified_type* ty) { return codegen_type(ty->unqualified_type()); });
+        [](const clauf::qualified_type* ty) { return codegen_lauf_type(ty->unqualified_type()); });
 }
 
 // INVARIANT: the resulting layout has a size that is a multiple of alignment.
-lauf_asm_layout codegen_layout(const clauf::type* ty)
+lauf_asm_layout codegen_lauf_layout(const clauf::type* ty)
 {
     if (auto array_ty = dryad::node_try_cast<clauf::array_type>(ty))
     {
-        auto element_layout = codegen_layout(array_ty->element_type());
+        auto element_layout = codegen_lauf_layout(array_ty->element_type());
         return lauf_asm_array_layout(element_layout, array_ty->size());
     }
     else
     {
-        return codegen_type(ty)->layout;
+        return codegen_lauf_type(ty)->layout;
     }
+}
+
+ffi_type* codegen_ffi_type(const clauf::type* ty)
+{
+    return dryad::visit_node_all(
+        ty,
+        [](const clauf::builtin_type* ty) {
+            switch (ty->type_kind())
+            {
+            case clauf::builtin_type::void_:
+                CLAUF_UNREACHABLE("not needed in lauf");
+            case clauf::builtin_type::nullptr_t:
+                return &ffi_type_pointer;
+
+            case clauf::builtin_type::sint8:
+                return &ffi_type_sint8;
+            case clauf::builtin_type::uint8:
+            case clauf::builtin_type::char_:
+                return &ffi_type_uint8;
+            case clauf::builtin_type::sint16:
+                return &ffi_type_sint16;
+            case clauf::builtin_type::uint16:
+                return &ffi_type_uint16;
+            case clauf::builtin_type::sint32:
+                return &ffi_type_sint32;
+            case clauf::builtin_type::uint32:
+                return &ffi_type_uint32;
+            case clauf::builtin_type::sint64:
+                return &ffi_type_sint64;
+            case clauf::builtin_type::uint64:
+                return &ffi_type_uint64;
+            }
+        },
+        [](const clauf::pointer_type*) { return &ffi_type_pointer; },
+        [](const clauf::array_type*) -> ffi_type* {
+            CLAUF_UNREACHABLE("array cannot be passed as function parameter");
+            return nullptr;
+        },
+        [](const clauf::function_type*) -> ffi_type* {
+            CLAUF_UNREACHABLE("function cannot be passed as function parameter");
+            return nullptr;
+        },
+        [](const clauf::qualified_type* ty) { return codegen_ffi_type(ty->unqualified_type()); });
 }
 
 template <typename Op, typename Expr>
@@ -91,7 +135,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             lauf_asm_inst_call_builtin(b, lauf_lib_memory_addr_distance);
 
             // Convert that to the type of the pointee.
-            auto pointee_type = codegen_type(
+            auto pointee_type = codegen_lauf_type(
                 dryad::node_cast<clauf::pointer_type>(expr->left()->type())->pointee_type());
             lauf_asm_inst_uint(b, pointee_type->layout.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_sdiv(LAUF_LIB_INT_OVERFLOW_PANIC));
@@ -113,7 +157,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             // The offset is on top of the stack, as we normalized the expr.
             // Multiply it by the size of the type.
             auto pointee_type
-                = codegen_layout(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
+                = codegen_lauf_layout(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
             lauf_asm_inst_uint(b, pointee_type.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
 
@@ -134,7 +178,7 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
             // The offset is on top of the stack, as we normalized the expr.
             // Multiply it by the size of the type.
             auto pointee_type
-                = codegen_layout(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
+                = codegen_lauf_layout(dryad::node_cast<clauf::pointer_type>(ty)->pointee_type());
             lauf_asm_inst_uint(b, pointee_type.size);
             lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
 
@@ -199,14 +243,27 @@ void call_arithmetic_builtin(lauf_asm_builder* b, Op op, const Expr* expr)
     }
 }
 
-LAUF_RUNTIME_BUILTIN(call_native, 1, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "call_native", nullptr)
+// This builtin takes two arguments:
+// * vstack_ptr[0] is an address to an array of pointers to the actual arguments
+// * vstack_ptr[1] is the native address of the ffi_function
+LAUF_RUNTIME_BUILTIN(call_native, 2, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "call_native", nullptr)
 {
-    auto fn_addr = vstack_ptr[0].as_native_ptr;
-    auto fn_ptr  = reinterpret_cast<void (*)()>(fn_addr);
-    fn_ptr();
+    auto ffi_function = static_cast<clauf::ffi_function*>(vstack_ptr[1].as_native_ptr);
 
-    --vstack_ptr;
-    LAUF_RUNTIME_BUILTIN_DISPATCH;
+    std::vector<void*> argument_ptrs;
+    auto               argument_addresses = static_cast<lauf_runtime_value*>(
+        lauf_runtime_get_mut_ptr(process, vstack_ptr[0].as_address, {1, 1}));
+    for (auto i = 0u; i != ffi_function->cif.nargs; ++i)
+    {
+        auto ptr = lauf_runtime_get_mut_ptr(process, argument_addresses[i].as_address, {1, 1});
+        argument_ptrs.push_back(ptr);
+    }
+
+    ffi_call(&ffi_function->cif, reinterpret_cast<void (*)()>(ffi_function->addr), nullptr,
+             argument_ptrs.data());
+
+    vstack_ptr += 2;
+    return lauf_runtime_builtin_dispatch(ip, vstack_ptr, frame_ptr, process);
 }
 
 struct context
@@ -298,7 +355,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
         },
         [&](const clauf::string_literal_expr* expr) { codegen_lvalue(ctx, b, expr); },
         [&](const clauf::type_constant_expr* expr) {
-            auto layout = codegen_layout(expr->operand_type());
+            auto layout = codegen_lauf_layout(expr->operand_type());
             switch (expr->op())
             {
             case clauf::type_constant_expr::sizeof_:
@@ -440,7 +497,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             if (!expr->is_array_decay_conversion() && clauf::is_complete_object_type(expr->type()))
             {
                 // Load the value stored at that point.
-                auto type = codegen_type(expr->type());
+                auto type = codegen_lauf_type(expr->type());
                 lauf_asm_inst_load_field(b, *type, 0);
             }
         },
@@ -469,7 +526,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
             case clauf::unary_op::pre_inc:
             case clauf::unary_op::pre_dec: {
-                auto type = codegen_type(expr->type());
+                auto type = codegen_lauf_type(expr->type());
 
                 // Because its an lvalue, the address is on the stack.
                 // Do a load to get the value.
@@ -494,7 +551,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
             case clauf::unary_op::post_inc:
             case clauf::unary_op::post_dec: {
-                auto type = codegen_type(expr->type());
+                auto type = codegen_lauf_type(expr->type());
 
                 // Because its an lvalue, the address is on the stack.
                 // Do a load to get the value.
@@ -679,7 +736,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                 // lvalue conversion expression.
                 visitor(expr->left());
                 // Manually do that here.
-                auto type = codegen_type(expr->left()->type());
+                auto type = codegen_lauf_type(expr->left()->type());
                 lauf_asm_inst_load_field(b, *type, 0);
 
                 visitor(expr->right());
@@ -701,7 +758,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             // Push the address of the lvalue onto the stack.
             codegen_lvalue(ctx, b, expr->left());
             // Store the value into address.
-            lauf_asm_inst_store_field(b, *codegen_type(expr->left()->type()), 0);
+            lauf_asm_inst_store_field(b, *codegen_lauf_type(expr->left()->type()), 0);
         },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
@@ -737,7 +794,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 template <typename ExprOrInit>
 void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const ExprOrInit* e)
 {
-    auto layout = codegen_layout(type);
+    auto layout = codegen_lauf_layout(type);
 
     // We create a chunk that will hold the bytecode for our expression.
     auto chunk = ctx.consteval_chunk;
@@ -748,7 +805,7 @@ void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const
         if constexpr (std::is_same_v<ExprOrInit, clauf::expr>)
         {
             // Store the result of the expression in the native global.
-            auto lauf_type = codegen_type(type);
+            auto lauf_type = codegen_lauf_type(type);
             codegen_expr(ctx, b, e);
             lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
             lauf_asm_inst_store_field(b, *lauf_type, 0);
@@ -794,7 +851,7 @@ void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const
 std::vector<unsigned char> constant_eval(context& ctx, const clauf::type* type,
                                          const clauf::init* init)
 {
-    auto                       layout = codegen_layout(type);
+    auto                       layout = codegen_lauf_layout(type);
     std::vector<unsigned char> result;
     result.resize(layout.size);
 
@@ -805,7 +862,7 @@ std::vector<unsigned char> constant_eval(context& ctx, const clauf::type* type,
 
 void codegen_global_init(context& ctx, lauf_asm_global* global, const clauf::variable_decl* decl)
 {
-    auto layout = codegen_layout(decl->type());
+    auto layout = codegen_lauf_layout(decl->type());
 
     if (decl->has_initializer())
     {
@@ -822,7 +879,7 @@ void codegen_global_init(context& ctx, lauf_asm_global* global, const clauf::var
 void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
                   const clauf::init* init)
 {
-    if (auto lauf_type = codegen_type(type))
+    if (auto lauf_type = codegen_lauf_type(type))
     {
         // Evaluate the initializer to a single stack value.
         CLAUF_ASSERT(clauf::is_scalar(type), "only scalars map to single stack values");
@@ -840,7 +897,7 @@ void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
     }
     else if (auto array = dryad::node_try_cast<const clauf::array_type>(type))
     {
-        auto elem_layout = codegen_layout(array->element_type());
+        auto elem_layout = codegen_lauf_layout(array->element_type());
         dryad::visit_node_all(
             init,
             [&](const clauf::empty_init*) {
@@ -926,7 +983,7 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
     {
         auto param_decl = *iter;
-        auto type       = codegen_type(param_decl->type());
+        auto type       = codegen_lauf_type(param_decl->type());
 
         auto var = lauf_asm_build_local(b, type->layout);
         ctx.local_vars.insert(param_decl, var);
@@ -1049,7 +1106,7 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
         [&](dryad::child_visitor<clauf::node_kind>, const clauf::variable_decl* decl) {
             if (decl->storage_duration() != clauf::storage_duration::static_)
             {
-                auto layout = codegen_layout(decl->type());
+                auto layout = codegen_lauf_layout(decl->type());
                 auto var    = lauf_asm_build_local(b, layout);
                 ctx.local_vars.insert(decl, var);
 
@@ -1075,11 +1132,27 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     return fn;
 }
 
-lauf_asm_function* codegen_native_trampoline(context& ctx, const clauf::function_decl* decl)
+clauf::ffi_function* get_ffi_function(context& ctx, clauf::code& code,
+                                      const clauf::function_decl* decl)
 {
-    auto fn        = *ctx.functions->lookup(decl);
-    ctx.local_vars = {};
+    std::vector<ffi_type*> types;
+    for (auto param : decl->parameters())
+        types.push_back(codegen_ffi_type(param->type()));
 
+    ffi_cif cif;
+    ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 1, &ffi_type_void, types.data());
+
+    // Find the native address of the function.
+    auto fn_addr = dlsym(RTLD_DEFAULT, decl->name().c_str(*ctx.symbols));
+    CLAUF_ASSERT(fn_addr != nullptr, "unknown native function");
+
+    return code.add_ffi_function({cif, fn_addr, std::move(types)});
+}
+
+lauf_asm_function* codegen_native_trampoline(context& ctx, clauf::code& code,
+                                             const clauf::function_decl* decl)
+{
+    auto                                      fn = *ctx.functions->lookup(decl);
     std::vector<const clauf::parameter_decl*> params;
     for (auto param : decl->parameters())
         params.push_back(param);
@@ -1087,11 +1160,33 @@ lauf_asm_function* codegen_native_trampoline(context& ctx, const clauf::function
     auto b = ctx.body_builder;
     lauf_asm_build(b, ctx.mod, fn);
 
-    // Find the native address of the function.
-    auto fn_addr = dlsym(RTLD_DEFAULT, decl->name().c_str(*ctx.symbols));
-    CLAUF_ASSERT(fn_addr != nullptr, "unknown native function");
+    // Create the argument array.
+    auto arguments
+        = lauf_asm_build_local(b, lauf_asm_array_layout(lauf_asm_type_value.layout, params.size()));
 
-    lauf_asm_inst_bytes(b, &fn_addr);
+    // We create variables for all parameters and store the value into them.
+    // Since parameters have been pushed onto the stack and are thus popped in reverse,
+    // we need to iterate in reverse order.
+    // We then store a pointer to the parameter in the arguments array.
+    for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
+    {
+        auto param_decl = *iter;
+        auto type       = codegen_lauf_type(param_decl->type());
+
+        auto var = lauf_asm_build_local(b, type->layout);
+        lauf_asm_inst_local_addr(b, var);
+        lauf_asm_inst_store_field(b, *type, 0);
+
+        lauf_asm_inst_local_addr(b, var);
+        lauf_asm_inst_local_addr(b, arguments);
+        lauf_asm_inst_uint(b, std::size_t(iter.base() - params.begin() - 1));
+        lauf_asm_inst_array_element(b, lauf_asm_type_value.layout);
+        lauf_asm_inst_store_field(b, lauf_asm_type_value, 0);
+    }
+
+    auto ffi_function = get_ffi_function(ctx, code, decl);
+    lauf_asm_inst_bytes(b, &ffi_function);
+    lauf_asm_inst_local_addr(b, arguments);
     lauf_asm_inst_call_builtin(b, call_native);
     lauf_asm_inst_return(b);
 
@@ -1192,10 +1287,10 @@ catch (std::runtime_error&)
     return 0;
 }
 
-lauf_asm_module* clauf::codegen::finish(const ast& ast) &&
+std::optional<clauf::code> clauf::codegen::finish(const ast& ast) &&
 try
 {
-    context ctx{_vm,
+    context     ctx{_vm,
                 _logger,
                 _symbols,
                 _file,
@@ -1207,6 +1302,7 @@ try
                 &_globals,
                 &_functions,
                 {}};
+    clauf::code code(_mod);
 
     // Generate body for all lauf declarations.
     dryad::visit_tree(
@@ -1224,13 +1320,13 @@ try
             if (decl->is_definition())
                 codegen_function_body(ctx, decl);
             else if (decl->linkage() == clauf::linkage::native)
-                codegen_native_trampoline(ctx, decl);
+                codegen_native_trampoline(ctx, code, decl);
         });
 
-    return ctx.mod;
+    return code;
 }
 catch (std::runtime_error&)
 {
-    return nullptr;
+    return std::nullopt;
 }
 

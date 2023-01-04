@@ -2245,8 +2245,10 @@ try
     if (!resolve_forward_declarations(state))
         return std::nullopt;
 
-    auto mod = std::move(state.codegen).finish(state.ast);
-    return clauf::compilation_result{std::move(state.ast), mod};
+    auto code = std::move(state.codegen).finish(state.ast);
+    if (!code)
+        return std::nullopt;
+    return clauf::compilation_result{std::move(state.ast), std::move(code.value())};
 }
 catch (fatal_error)
 {
