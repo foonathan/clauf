@@ -89,7 +89,7 @@ ffi_type* codegen_ffi_type(const clauf::type* ty)
             switch (ty->type_kind())
             {
             case clauf::builtin_type::void_:
-                CLAUF_UNREACHABLE("not needed in lauf");
+                return &ffi_type_void;
             case clauf::builtin_type::nullptr_t:
                 return &ffi_type_pointer;
 
