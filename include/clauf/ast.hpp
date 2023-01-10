@@ -71,12 +71,22 @@ class pointer_type
 : public dryad::basic_node<type_node_kind::pointer_type, dryad::container_node<type>>
 {
 public:
-    explicit pointer_type(dryad::node_ctor ctor, type* pointee_type) : node_base(ctor)
+    explicit pointer_type(dryad::node_ctor ctor, bool is_native, type* pointee_type)
+    : node_base(ctor), _is_native(is_native)
     {
         insert_child_after(nullptr, pointee_type);
     }
 
     DRYAD_CHILD_NODE_GETTER(type, pointee_type, nullptr)
+
+    /// Returns true if we need to translate this pointer into the native representation.
+    bool is_native() const
+    {
+        return _is_native;
+    }
+
+private:
+    bool _is_native;
 };
 
 /// An array type.
@@ -167,8 +177,10 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
         hasher.hash_scalar(kind);
     }
     template <typename HashAlgorithm>
-    static void hash(HashAlgorithm&, const pointer_type*)
-    {}
+    static void hash(HashAlgorithm& hasher, const pointer_type* ptr)
+    {
+        hasher.hash_scalar(ptr->is_native());
+    }
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm& hasher, const array_type* array)
     {
@@ -191,9 +203,9 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
     {
         return node->type_kind() == kind;
     }
-    static bool is_equal(const pointer_type*, const pointer_type*)
+    static bool is_equal(const pointer_type* lhs, const pointer_type* rhs)
     {
-        return true;
+        return lhs->is_native() == rhs->is_native();
     }
     static bool is_equal(const array_type* lhs, const array_type* rhs)
     {
@@ -1239,7 +1251,8 @@ private:
 
 name        get_name(const declarator* decl);
 init*       get_init(const declarator* decl);
-const type* get_type(type_forest& types, const declarator* decl, const type* decl_type);
+const type* get_type(type_forest& types, const declarator* decl, bool is_native,
+                     const type* decl_type);
 } // namespace clauf
 
 //=== translation_unit ===//

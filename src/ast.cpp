@@ -14,7 +14,8 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
             return creator.create<clauf::builtin_type>(ty->type_kind());
         },
         [&](const clauf::pointer_type* ty) -> clauf::type* {
-            return creator.create<clauf::pointer_type>(clone(creator, ty->pointee_type()));
+            return creator.create<clauf::pointer_type>(ty->is_native(),
+                                                       clone(creator, ty->pointee_type()));
         },
         [&](const clauf::array_type* ty) -> clauf::type* {
             return creator.create<clauf::array_type>(clone(creator, ty->element_type()),
@@ -496,20 +497,21 @@ clauf::init* clauf::get_init(const declarator* decl)
         return nullptr;
 }
 
-const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
+const clauf::type* clauf::get_type(type_forest& types, const declarator* decl, bool is_native,
                                    const type* decl_type)
 {
     return dryad::visit_node_all(
         decl, //
         [&](const clauf::name_declarator*) { return decl_type; },
         [&](const clauf::pointer_declarator* decl) -> const clauf::type* {
-            auto pointee_type = get_type(types, decl->child(), decl_type);
+            auto pointee_type = get_type(types, decl->child(), is_native, decl_type);
             if (pointee_type == nullptr)
                 return nullptr;
 
             return types.build([&](clauf::type_forest::node_creator creator) {
                 clauf::type* result
-                    = creator.create<clauf::pointer_type>(clauf::clone(creator, pointee_type));
+                    = creator.create<clauf::pointer_type>(is_native,
+                                                          clauf::clone(creator, pointee_type));
                 if (decl->qualifiers() != clauf::qualified_type::unqualified)
                     result = creator.create<clauf::qualified_type>(decl->qualifiers(), result);
                 return result;
@@ -526,7 +528,7 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
                 return creator.create<clauf::array_type>(clauf::clone(creator, decl_type),
                                                          decl->size());
             });
-            return get_type(types, decl->child(), outer_array);
+            return get_type(types, decl->child(), is_native, outer_array);
         },
         [&](const clauf::function_declarator* decl) {
             return types.build([&](clauf::type_forest::node_creator creator) -> clauf::type* {
@@ -534,7 +536,8 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
                 for (auto param : decl->parameters())
                     parameter_types.push_back(clauf::clone(creator, param->type()));
 
-                auto return_type = clauf::clone(creator, get_type(types, decl->child(), decl_type));
+                auto return_type
+                    = clauf::clone(creator, get_type(types, decl->child(), is_native, decl_type));
                 if (return_type == nullptr)
                     return nullptr;
 
@@ -542,7 +545,7 @@ const clauf::type* clauf::get_type(type_forest& types, const declarator* decl,
             });
         },
         [&](const clauf::init_declarator* decl) {
-            return get_type(types, decl->child(), decl_type);
+            return get_type(types, decl->child(), is_native, decl_type);
         });
 }
 
@@ -658,7 +661,9 @@ void clauf::dump_type(const clauf::type* ty)
                 break;
             }
         },
-        [](dryad::traverse_event_enter, const clauf::pointer_type*) { std::printf("* "); },
+        [](dryad::traverse_event_enter, const clauf::pointer_type* ty) {
+            std::printf("*%s ", ty->is_native() ? "native" : "");
+        },
         [](dryad::traverse_event_enter, const clauf::array_type* ty) {
             std::printf("[%zu] ", ty->size());
         },

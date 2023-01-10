@@ -18,6 +18,7 @@
 #include <lauf/lib/test.h>
 #include <lauf/runtime/builtin.h>
 #include <lauf/runtime/memory.h>
+#include <lauf/runtime/process.h>
 #include <lauf/runtime/value.h>
 #include <lexy/input_location.hpp>
 #include <stdexcept>
@@ -266,6 +267,21 @@ LAUF_RUNTIME_BUILTIN(call_native, 3, 0, LAUF_RUNTIME_BUILTIN_DEFAULT, "call_nati
              lauf_runtime_get_mut_ptr(process, return_address, {1, 1}), argument_ptrs);
 
     vstack_ptr += 3;
+    LAUF_RUNTIME_BUILTIN_DISPATCH;
+}
+
+// Translates a lauf address into the native pointer representation.
+// It takes one argument, which is the address, and returns one argument, which is the pointer.
+LAUF_RUNTIME_BUILTIN(translate_pointer, 1, 1, LAUF_RUNTIME_BUILTIN_DEFAULT, "translate_pointer",
+                     &call_native)
+{
+    auto address = vstack_ptr[0].as_address;
+
+    auto ptr = lauf_runtime_get_const_ptr(process, address, {0, 1});
+    if (ptr == nullptr)
+        return lauf_runtime_panic(process, "invalid address");
+    vstack_ptr[0].as_native_ptr = (void*)ptr;
+
     LAUF_RUNTIME_BUILTIN_DISPATCH;
 }
 
@@ -1175,6 +1191,10 @@ lauf_asm_function* codegen_native_trampoline(context& ctx, clauf::code& code,
     {
         auto param_decl = *iter;
         auto type       = codegen_lauf_type(param_decl->type());
+
+        if (auto ptr = dryad::node_try_cast<clauf::pointer_type>(param_decl->type());
+            (ptr != nullptr) && ptr->is_native())
+            lauf_asm_inst_call_builtin(b, translate_pointer);
 
         auto var = lauf_asm_build_local(b, type->layout);
         lauf_asm_inst_local_addr(b, var);
