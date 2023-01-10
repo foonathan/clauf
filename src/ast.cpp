@@ -669,8 +669,15 @@ void clauf::dump_type(const clauf::type* ty)
         },
         [](dryad::child_visitor<clauf::type_node_kind> visitor, const clauf::function_type* ty) {
             std::printf("(");
+            auto first = true;
             for (auto param : ty->parameters())
+            {
+                if (first)
+                    first = false;
+                else
+                    std::printf(", ");
                 visitor(param);
+            }
             std::printf(") -> ");
             visitor(ty->return_type());
         },
