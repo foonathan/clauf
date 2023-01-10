@@ -1171,8 +1171,8 @@ clauf::ffi_function* get_ffi_function(context& ctx, clauf::code& code,
         types.push_back(codegen_ffi_type(param->type()));
 
     ffi_cif cif;
-    ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 1, codegen_ffi_type(decl->type()->return_type()),
-                 types.data());
+    ffi_prep_cif(&cif, FFI_DEFAULT_ABI, unsigned(types.size()),
+                 codegen_ffi_type(decl->type()->return_type()), types.data());
 
     // Find the native address of the function.
     auto fn_addr = dlsym(RTLD_DEFAULT, decl->name().c_str(*ctx.symbols));
