@@ -602,7 +602,8 @@ struct type_with_specs
 
     bool is_valid_for_parameter() const
     {
-        return !linkage && !storage_duration && !is_constexpr;
+        return (!linkage || linkage == clauf::linkage::native) && !storage_duration
+               && !is_constexpr;
     }
     bool is_valid_cast() const
     {
@@ -1422,10 +1423,17 @@ struct decl_specifier_list
                 std::optional<clauf::storage_duration> storage_duration;
                 bool                                   is_constexpr = false;
 
-                std::optional<clauf::builtin_type::type_kind_t> base_type;
-                std::optional<bool>                             is_signed;
-                int                                             short_count = 0;
-                int qualifiers = clauf::qualified_type::unqualified;
+                enum class base_type_t
+                {
+                    void_,
+                    char_,
+                    int_,
+                };
+                std::optional<base_type_t> base_type;
+                std::optional<bool>        is_signed;
+                int                        short_count = 0;
+                int                        qualifiers  = clauf::qualified_type::unqualified;
+                bool                       is_native   = false;
 
                 auto log_error = [&] {
                     state.logger
@@ -1472,23 +1480,24 @@ struct decl_specifier_list
                     case decl_specifier::clauf_native:
                         if (linkage.has_value())
                             log_error();
-                        linkage = clauf::linkage::native;
+                        linkage   = clauf::linkage::native;
+                        is_native = true;
                         break;
 
                     case decl_specifier::void_:
                         if (base_type.has_value())
                             log_error();
-                        base_type = clauf::builtin_type::void_;
+                        base_type = base_type_t::void_;
                         break;
                     case decl_specifier::int_:
                         if (base_type.has_value())
                             log_error();
-                        base_type = clauf::builtin_type::sint64;
+                        base_type = base_type_t::int_;
                         break;
                     case decl_specifier::char_:
                         if (base_type.has_value())
                             log_error();
-                        base_type = clauf::builtin_type::char_;
+                        base_type = base_type_t::char_;
                         break;
                     case decl_specifier::signed_:
                         if (is_signed.has_value())
@@ -1531,16 +1540,16 @@ struct decl_specifier_list
                 }
 
                 auto unqualified_ty = [&]() -> clauf::type* {
-                    switch (base_type.value_or(clauf::builtin_type::sint64))
+                    switch (base_type.value_or(base_type_t::int_))
                     {
-                    case builtin_type::void_:
+                    case base_type_t::void_:
                         if (is_signed.has_value())
                             log_error();
 
                         return state.ast.types.lookup_or_create<clauf::builtin_type>(
                             clauf::builtin_type::void_);
 
-                    case builtin_type::char_:
+                    case base_type_t::char_:
                         if (short_count > 0)
                             log_error();
 
@@ -1551,29 +1560,31 @@ struct decl_specifier_list
                         else
                             return state.ast.create(clauf::builtin_type::uint8);
 
-                    case builtin_type::sint64:
+                    case base_type_t::int_:
                         if (is_signed.value_or(true))
                         {
                             if (short_count == 0)
-                                return state.ast.create(clauf::builtin_type::sint64);
+                                return state.ast.create(is_native ? clauf::builtin_type::sint32
+                                                                  : clauf::builtin_type::sint64);
                             else if (short_count == 1)
-                                return state.ast.create(clauf::builtin_type::sint32);
+                                return state.ast.create(is_native ? clauf::builtin_type::sint16
+                                                                  : clauf::builtin_type::sint32);
                             else
-                                return state.ast.create(clauf::builtin_type::sint16);
+                                return state.ast.create(is_native ? clauf::builtin_type::sint8
+                                                                  : clauf::builtin_type::sint16);
                         }
                         else
                         {
                             if (short_count == 0)
-                                return state.ast.create(clauf::builtin_type::uint64);
+                                return state.ast.create(is_native ? clauf::builtin_type::uint32
+                                                                  : clauf::builtin_type::uint64);
                             else if (short_count == 1)
-                                return state.ast.create(clauf::builtin_type::uint32);
+                                return state.ast.create(is_native ? clauf::builtin_type::uint16
+                                                                  : clauf::builtin_type::uint32);
                             else
-                                return state.ast.create(clauf::builtin_type::uint16);
+                                return state.ast.create(is_native ? clauf::builtin_type::uint8
+                                                                  : clauf::builtin_type::uint16);
                         }
-
-                    default:
-                        CLAUF_UNREACHABLE("not a base type");
-                        return nullptr;
                     }
                 }();
 
