@@ -476,7 +476,7 @@ std::size_t clauf::initializer_count_of(const init* init)
             return std::size_t(
                 std::distance(init->initializers().begin(), init->initializers().end()));
         },
-        [](const expr_init*) { return 0u; });
+        [](const expr_init*) { return 1u; });
 }
 
 clauf::name clauf::get_name(const declarator* decl)
