@@ -134,9 +134,9 @@ clauf::expr* do_array_decay(compiler_state& state, clauf::location loc, clauf::e
     if (auto array_ty = dryad::node_try_cast<clauf::array_type>(expr->type()))
     {
         auto pointer_ty = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
-            return creator.create<clauf::pointer_type>(false, // expressions are never native
-                                                       clauf::clone(creator,
-                                                                    array_ty->element_type()));
+            return creator.create<
+                clauf::pointer_type>(clauf::native_specifier::none, // expressions are never native
+                                     clauf::clone(creator, array_ty->element_type()));
         });
         return state.ast.create<clauf::decay_expr>(loc, pointer_ty, expr);
     }
@@ -341,6 +341,7 @@ enum class decl_specifier
     register_,
     static_,
     clauf_native,
+    clauf_native_string,
 
     //=== type specifiers ===//
     void_,
@@ -369,6 +370,7 @@ constexpr auto kw_decl_specifiers
           .map(LEXY_LIT("register"), decl_specifier::register_)
           .map(LEXY_LIT("static"), decl_specifier::static_)
           .map(LEXY_LIT("__clauf_native"), decl_specifier::clauf_native)
+          .map(LEXY_LIT("__clauf_native_string"), decl_specifier::clauf_native_string)
           .map(LEXY_LIT("void"), decl_specifier::void_)
           .map(LEXY_LIT("int"), decl_specifier::int_)
           .map(LEXY_LIT("char"), decl_specifier::char_)
@@ -597,6 +599,7 @@ struct decl_specifier_list;
 struct type_with_specs
 {
     clauf::type*                           type;
+    clauf::native_specifier                native;
     std::optional<clauf::linkage>          linkage;
     std::optional<clauf::storage_duration> storage_duration;
     bool                                   is_constexpr;
@@ -643,8 +646,7 @@ struct type_name_in_parens
             if (decl == nullptr)
                 return ty_stor.type;
 
-            auto type = clauf::get_type(state.ast.types, decl,
-                                        ty_stor.linkage == clauf::linkage::native, ty_stor.type);
+            auto type = clauf::get_type(state.ast.types, decl, ty_stor.native, ty_stor.type);
             if (type == nullptr)
             {
                 state.logger
@@ -675,7 +677,8 @@ struct builtin_expr
                     return state.ast.types.build([&](clauf::type_forest::node_creator creator) {
                         auto void_
                             = creator.create<clauf::builtin_type>(clauf::builtin_type::void_);
-                        return creator.create<clauf::pointer_type>(false, void_);
+                        return creator.create<clauf::pointer_type>(clauf::native_specifier::none,
+                                                                   void_);
                     });
                 else
                 {
@@ -876,7 +879,7 @@ struct expr : lexy::expression_production
         if (op == clauf::unary_op::address)
         {
             auto type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
-                return creator.create<clauf::pointer_type>(false,
+                return creator.create<clauf::pointer_type>(clauf::native_specifier::none,
                                                            clauf::clone(creator, child->type()));
             });
             return state.ast.create<clauf::unary_expr>(op.loc, type, op, child);
@@ -1436,7 +1439,7 @@ struct decl_specifier_list
                 std::optional<bool>        is_signed;
                 int                        short_count = 0;
                 int                        qualifiers  = clauf::qualified_type::unqualified;
-                bool                       is_native   = false;
+                clauf::native_specifier    native      = clauf::native_specifier::none;
 
                 auto log_error = [&] {
                     state.logger
@@ -1481,10 +1484,16 @@ struct decl_specifier_list
                         storage_duration = clauf::storage_duration::static_;
                         break;
                     case decl_specifier::clauf_native:
-                        if (linkage.has_value())
+                        if (linkage.has_value() || native != clauf::native_specifier::none)
                             log_error();
-                        linkage   = clauf::linkage::native;
-                        is_native = true;
+                        linkage = clauf::linkage::native;
+                        native  = clauf::native_specifier::default_;
+                        break;
+                    case decl_specifier::clauf_native_string:
+                        if (linkage.has_value() || native != clauf::native_specifier::none)
+                            log_error();
+                        linkage = clauf::linkage::native;
+                        native  = clauf::native_specifier::string;
                         break;
 
                     case decl_specifier::void_:
@@ -1543,6 +1552,7 @@ struct decl_specifier_list
                 }
 
                 auto unqualified_ty = [&]() -> clauf::type* {
+                    auto is_native = native != clauf::native_specifier::none;
                     switch (base_type.value_or(base_type_t::int_))
                     {
                     case base_type_t::void_:
@@ -1608,7 +1618,7 @@ struct decl_specifier_list
                         return unqualified_ty;
                     }
                 }();
-                return type_with_specs{result_ty, linkage, storage_duration, is_constexpr};
+                return type_with_specs{result_ty, native, linkage, storage_duration, is_constexpr};
             });
 };
 
@@ -1722,8 +1732,7 @@ struct parameter_decl
         = callback<clauf::parameter_decl*>([](compiler_state& state, const char* pos,
                                               type_with_specs ty_spec, clauf::declarator* decl) {
               auto name = get_name(decl);
-              auto type = get_type(state.ast.types, decl, ty_spec.linkage == clauf::linkage::native,
-                                   ty_spec.type);
+              auto type = get_type(state.ast.types, decl, ty_spec.native, ty_spec.type);
               if (type == nullptr)
               {
                   state.logger
@@ -1749,9 +1758,7 @@ struct parameter_decl
               {
                   type = state.ast.types.build([&](clauf::type_forest::node_creator creator) {
                       auto element_type = clauf::clone(creator, array->element_type());
-                      return creator.create<clauf::pointer_type>(ty_spec.linkage
-                                                                     == clauf::linkage::native,
-                                                                 element_type);
+                      return creator.create<clauf::pointer_type>(ty_spec.native, element_type);
                   });
               }
 
@@ -1901,8 +1908,7 @@ struct declaration
                                                     std::size_t              initializer_count)
     {
         auto name = get_name(declarator);
-        auto type = get_type(state.ast.types, declarator, ty_spec.linkage == clauf::linkage::native,
-                             ty_spec.type);
+        auto type = get_type(state.ast.types, declarator, ty_spec.native, ty_spec.type);
         if (type == nullptr)
         {
             state.logger
@@ -2098,8 +2104,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
 
             auto name = get_name(decl);
             auto type
-                = get_type(state.ast.types, decl, ty_spec.value().linkage == clauf::linkage::native,
-                           ty_spec.value().type);
+                = get_type(state.ast.types, decl, ty_spec.value().native, ty_spec.value().type);
             if (type == nullptr)
             {
                 state.logger

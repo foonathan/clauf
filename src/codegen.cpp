@@ -284,14 +284,37 @@ LAUF_RUNTIME_BUILTIN(translate_address_to_pointer, 1, 1, LAUF_RUNTIME_BUILTIN_DE
 
     LAUF_RUNTIME_BUILTIN_DISPATCH;
 }
+// As above, but translates to a C string.
+LAUF_RUNTIME_BUILTIN(translate_address_to_string, 1, 1, LAUF_RUNTIME_BUILTIN_DEFAULT,
+                     "translate_address_to_string", &translate_address_to_pointer)
+{
+    auto address = vstack_ptr[0].as_address;
+
+    auto ptr = lauf_runtime_get_cstr(process, address);
+    if (ptr == nullptr)
+        return lauf_runtime_panic(process, "invalid address");
+    vstack_ptr[0].as_native_ptr = (void*)ptr;
+
+    LAUF_RUNTIME_BUILTIN_DISPATCH;
+}
 
 // Translates a native pointer back to a lauf address.
 LAUF_RUNTIME_BUILTIN(translate_pointer_to_address, 1, 1, LAUF_RUNTIME_BUILTIN_DEFAULT,
-                     "translate_pointer_to_address", &translate_address_to_pointer)
+                     "translate_pointer_to_address", &translate_address_to_string)
 {
     auto ptr = vstack_ptr[0].as_native_ptr;
 
     auto address             = lauf_runtime_add_static_mut_allocation(process, ptr, size_t(-1));
+    vstack_ptr[0].as_address = address;
+
+    LAUF_RUNTIME_BUILTIN_DISPATCH;
+}
+LAUF_RUNTIME_BUILTIN(translate_string_to_address, 1, 1, LAUF_RUNTIME_BUILTIN_DEFAULT,
+                     "translate_string_to_address", &translate_pointer_to_address)
+{
+    auto ptr = static_cast<char*>(vstack_ptr[0].as_native_ptr);
+
+    auto address = lauf_runtime_add_static_mut_allocation(process, ptr, std::strlen(ptr) + 1);
     vstack_ptr[0].as_address = address;
 
     LAUF_RUNTIME_BUILTIN_DISPATCH;
@@ -1205,8 +1228,10 @@ lauf_asm_function* codegen_native_trampoline(context& ctx, clauf::code& code,
         auto type       = codegen_lauf_type(param_decl->type());
 
         if (auto ptr = dryad::node_try_cast<clauf::pointer_type>(param_decl->type());
-            (ptr != nullptr) && ptr->is_native())
+            ptr != nullptr && ptr->native() == clauf::native_specifier::default_)
             lauf_asm_inst_call_builtin(b, translate_address_to_pointer);
+        else if (ptr != nullptr && ptr->native() == clauf::native_specifier::string)
+            lauf_asm_inst_call_builtin(b, translate_address_to_string);
 
         auto var = lauf_asm_build_local(b, type->layout);
         lauf_asm_inst_local_addr(b, var);
@@ -1247,8 +1272,10 @@ lauf_asm_function* codegen_native_trampoline(context& ctx, clauf::code& code,
         lauf_asm_inst_local_addr(b, return_value);
         lauf_asm_inst_load_field(b, *return_type, 0);
         if (auto ptr = dryad::node_try_cast<clauf::pointer_type>(decl->type()->return_type());
-            (ptr != nullptr) && ptr->is_native())
+            ptr != nullptr && ptr->native() == clauf::native_specifier::default_)
             lauf_asm_inst_call_builtin(b, translate_pointer_to_address);
+        else if (ptr != nullptr && ptr->native() == clauf::native_specifier::string)
+            lauf_asm_inst_call_builtin(b, translate_string_to_address);
     }
     lauf_asm_inst_return(b);
 

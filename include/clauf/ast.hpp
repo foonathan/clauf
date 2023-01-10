@@ -17,6 +17,13 @@
 //=== types ===//
 namespace clauf
 {
+enum class native_specifier
+{
+    none,
+    default_,
+    string,
+};
+
 enum class type_node_kind
 {
     builtin_type,
@@ -71,22 +78,21 @@ class pointer_type
 : public dryad::basic_node<type_node_kind::pointer_type, dryad::container_node<type>>
 {
 public:
-    explicit pointer_type(dryad::node_ctor ctor, bool is_native, type* pointee_type)
-    : node_base(ctor), _is_native(is_native)
+    explicit pointer_type(dryad::node_ctor ctor, native_specifier native, type* pointee_type)
+    : node_base(ctor), _native(native)
     {
         insert_child_after(nullptr, pointee_type);
     }
 
     DRYAD_CHILD_NODE_GETTER(type, pointee_type, nullptr)
 
-    /// Returns true if we need to translate this pointer into the native representation.
-    bool is_native() const
+    native_specifier native() const
     {
-        return _is_native;
+        return _native;
     }
 
 private:
-    bool _is_native;
+    native_specifier _native;
 };
 
 /// An array type.
@@ -179,7 +185,7 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm& hasher, const pointer_type* ptr)
     {
-        hasher.hash_scalar(ptr->is_native());
+        hasher.hash_scalar(ptr->native());
     }
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm& hasher, const array_type* array)
@@ -205,7 +211,7 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
     }
     static bool is_equal(const pointer_type* lhs, const pointer_type* rhs)
     {
-        return lhs->is_native() == rhs->is_native();
+        return lhs->native() == rhs->native();
     }
     static bool is_equal(const array_type* lhs, const array_type* rhs)
     {
@@ -1251,7 +1257,7 @@ private:
 
 name        get_name(const declarator* decl);
 init*       get_init(const declarator* decl);
-const type* get_type(type_forest& types, const declarator* decl, bool is_native,
+const type* get_type(type_forest& types, const declarator* decl, native_specifier native,
                      const type* decl_type);
 } // namespace clauf
 
