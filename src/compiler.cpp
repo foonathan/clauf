@@ -626,6 +626,11 @@ struct type_with_specs
     {
         return linkage != clauf::linkage::none && !storage_duration && !is_constexpr;
     }
+
+    bool requires_declarator() const
+    {
+        return !dryad::node_has_kind<clauf::decl_type>(type);
+    }
 };
 
 // Parses a type name followed by a closing paren.
@@ -1759,7 +1764,7 @@ struct declarator : lexy::expression_production
 struct member_decl
 {
     static constexpr auto rule
-        = dsl::position + dsl::p<decl_specifier_list> + dsl::p<declarator<true>>;
+        = dsl::position + dsl::p<decl_specifier_list> + dsl::p<declarator<false>>;
     static constexpr auto value
         = callback<clauf::member_decl*>([](compiler_state& state, const char* pos,
                                            type_with_specs ty_spec, clauf::declarator* decl) {
@@ -1990,8 +1995,9 @@ void verify_init(compiler_state& state, clauf::location loc, const clauf::type* 
 
 struct declaration
 {
-    static constexpr auto rule = dsl::position(dsl::p<decl_specifier_list>)
-                                 >> dsl::p<init_declarator_list> + dsl::semicolon;
+    static constexpr auto rule
+        = dsl::position(dsl::p<decl_specifier_list>)
+          >> (dsl::semicolon | dsl::else_ >> dsl::p<init_declarator_list> + dsl::semicolon);
 
     static clauf::decl* create_non_init_declaration(compiler_state& state, const char* pos,
                                                     type_with_specs          ty_spec,
@@ -2099,51 +2105,64 @@ struct declaration
             });
     }
 
-    static constexpr auto value = callback<
-        clauf::decl_list>([](compiler_state& state, const char* pos, type_with_specs ty_stor,
-                             const clauf::declarator_list& declarators) {
-        clauf::decl_list result;
-        for (auto declarator : declarators)
-        {
-            if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
+    static constexpr auto value = callback<clauf::decl_list>(
+        [](compiler_state& state, const char* pos, type_with_specs ty_stor,
+           const clauf::declarator_list& declarators) {
+            clauf::decl_list result;
+            for (auto declarator : declarators)
             {
-                auto decl
-                    = create_non_init_declaration(state, pos, ty_stor, init->child(),
-                                                  clauf::initializer_count_of(init->initializer()));
-                auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
-
-                verify_init(state, state.ast.input.location_of(decl), decl->type(),
-                            init->initializer());
-                var_decl->set_initializer(init->initializer());
-                result.push_back(decl);
-
-                if (var_decl->is_constexpr() && !clauf::is_constant_init(init->initializer()))
+                if (auto init = dryad::node_try_cast<clauf::init_declarator>(declarator))
                 {
-                    state.logger
-                        .log(clauf::diagnostic_kind::error,
-                             "initializer for global variable needs to be a constant expression")
-                        .annotation(clauf::annotation_kind::primary,
-                                    state.ast.input.location_of(decl), "here")
-                        .finish();
+                    auto decl     = create_non_init_declaration(state, pos, ty_stor, init->child(),
+                                                                clauf::initializer_count_of(
+                                                                init->initializer()));
+                    auto var_decl = dryad::node_cast<clauf::variable_decl>(decl);
+
+                    verify_init(state, state.ast.input.location_of(decl), decl->type(),
+                                init->initializer());
+                    var_decl->set_initializer(init->initializer());
+                    result.push_back(decl);
+
+                    if (var_decl->is_constexpr() && !clauf::is_constant_init(init->initializer()))
+                    {
+                        state.logger
+                            .log(
+                                clauf::diagnostic_kind::error,
+                                "initializer for global variable needs to be a constant expression")
+                            .annotation(clauf::annotation_kind::primary,
+                                        state.ast.input.location_of(decl), "here")
+                            .finish();
+                    }
+                    if (!var_decl->is_definition())
+                    {
+                        state.logger
+                            .log(clauf::diagnostic_kind::error,
+                                 "variable forward declaration cannot have an initializer")
+                            .annotation(clauf::annotation_kind::primary,
+                                        state.ast.input.location_of(decl), "here")
+                            .finish();
+                    }
                 }
-                if (!var_decl->is_definition())
+                else
                 {
-                    state.logger
-                        .log(clauf::diagnostic_kind::error,
-                             "variable forward declaration cannot have an initializer")
-                        .annotation(clauf::annotation_kind::primary,
-                                    state.ast.input.location_of(decl), "here")
-                        .finish();
+                    result.push_back(
+                        create_non_init_declaration(state, pos, ty_stor, declarator, 0));
                 }
             }
-            else
-            {
-                result.push_back(create_non_init_declaration(state, pos, ty_stor, declarator, 0));
-            }
-        }
 
-        return result;
-    });
+            return result;
+        },
+        [](compiler_state& state, const char* pos, type_with_specs ty_spec) {
+            if (ty_spec.requires_declarator())
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "declaration does not declare anything")
+                    .annotation(clauf::annotation_kind::primary, pos, "here")
+                    .finish();
+            }
+
+            return clauf::decl_list();
+        });
 };
 
 struct global_declaration : lexy::scan_production<clauf::decl_list>
@@ -2155,6 +2174,19 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
         auto ty_spec = scanner.parse(grammar::decl_specifier_list{});
         if (!ty_spec)
             return lexy::scan_failed;
+
+        if (scanner.branch(dsl::semicolon))
+        {
+            if (ty_spec.value().requires_declarator())
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "declaration does not declare anything")
+                    .annotation(clauf::annotation_kind::primary, pos, "here")
+                    .finish();
+            }
+
+            return clauf::decl_list();
+        }
 
         auto decl_list = scanner.parse(grammar::init_declarator_list{});
         if (!decl_list)
@@ -2353,6 +2385,7 @@ std::optional<clauf::compilation_result> clauf::compile(lauf_vm* vm, file&& inpu
 try
 {
     compiler_state state(vm, LEXY_MOV(input));
+
     auto result = lexy::parse<clauf::grammar::translation_unit>(state.ast.input.buffer(), state,
                                                                 state.logger.error_callback());
     if (!result || !state.logger)
