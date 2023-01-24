@@ -9,6 +9,7 @@
 #include <lexy/dsl.hpp>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <clauf/assert.hpp>
@@ -42,10 +43,11 @@ struct scope
 
 struct compiler_state
 {
-    clauf::ast                     ast;
-    clauf::diagnostic_logger       logger;
-    dryad::tree<clauf::declarator> decl_tree;
-    clauf::codegen                 codegen;
+    clauf::ast                                    ast;
+    dryad::unlinked_node_list<clauf::struct_decl> structs;
+    clauf::diagnostic_logger                      logger;
+    dryad::tree<clauf::declarator>                decl_tree;
+    clauf::codegen                                codegen;
 
     scope                 global_scope;
     scope*                current_scope;
@@ -332,7 +334,7 @@ constexpr auto kw_type_ops = lexy::symbol_table<clauf::type_constant_expr::op_t>
                                  .map(LEXY_LIT("sizeof"), clauf::type_constant_expr::sizeof_)
                                  .map(LEXY_LIT("alignof"), clauf::type_constant_expr::alignof_);
 
-enum class decl_specifier
+enum class simple_decl_specifier
 {
     //=== storage class specifiers ===//
     auto_,
@@ -358,25 +360,30 @@ enum class decl_specifier
     restrict_,
 };
 
-constexpr auto kw_type_qualifiers = lexy::symbol_table<decl_specifier> //
-                                        .map(LEXY_LIT("const"), decl_specifier::const_)
-                                        .map(LEXY_LIT("volatile"), decl_specifier::volatile_)
-                                        .map(LEXY_LIT("restrict"), decl_specifier::restrict_);
+using decl_specifier = std::variant<simple_decl_specifier, clauf::struct_decl*>;
+
+constexpr auto kw_type_qualifiers
+    = lexy::symbol_table<simple_decl_specifier> //
+          .map(LEXY_LIT("const"), simple_decl_specifier::const_)
+          .map(LEXY_LIT("volatile"), simple_decl_specifier::volatile_)
+          .map(LEXY_LIT("restrict"), simple_decl_specifier::restrict_);
 constexpr auto kw_decl_specifiers
     = kw_type_qualifiers //
-          .map(LEXY_LIT("auto"), decl_specifier::auto_)
-          .map(LEXY_LIT("constexpr"), decl_specifier::constexpr_)
-          .map(LEXY_LIT("extern"), decl_specifier::extern_)
-          .map(LEXY_LIT("register"), decl_specifier::register_)
-          .map(LEXY_LIT("static"), decl_specifier::static_)
-          .map(LEXY_LIT("__clauf_native"), decl_specifier::clauf_native)
-          .map(LEXY_LIT("__clauf_native_string"), decl_specifier::clauf_native_string)
-          .map(LEXY_LIT("void"), decl_specifier::void_)
-          .map(LEXY_LIT("int"), decl_specifier::int_)
-          .map(LEXY_LIT("char"), decl_specifier::char_)
-          .map(LEXY_LIT("signed"), decl_specifier::signed_)
-          .map(LEXY_LIT("unsigned"), decl_specifier::unsigned_)
-          .map(LEXY_LIT("short"), decl_specifier::short_);
+          .map(LEXY_LIT("auto"), simple_decl_specifier::auto_)
+          .map(LEXY_LIT("constexpr"), simple_decl_specifier::constexpr_)
+          .map(LEXY_LIT("extern"), simple_decl_specifier::extern_)
+          .map(LEXY_LIT("register"), simple_decl_specifier::register_)
+          .map(LEXY_LIT("static"), simple_decl_specifier::static_)
+          .map(LEXY_LIT("__clauf_native"), simple_decl_specifier::clauf_native)
+          .map(LEXY_LIT("__clauf_native_string"), simple_decl_specifier::clauf_native_string)
+          .map(LEXY_LIT("void"), simple_decl_specifier::void_)
+          .map(LEXY_LIT("int"), simple_decl_specifier::int_)
+          .map(LEXY_LIT("char"), simple_decl_specifier::char_)
+          .map(LEXY_LIT("signed"), simple_decl_specifier::signed_)
+          .map(LEXY_LIT("unsigned"), simple_decl_specifier::unsigned_)
+          .map(LEXY_LIT("short"), simple_decl_specifier::short_);
+
+constexpr auto kw_struct = LEXY_KEYWORD("struct", id);
 
 constexpr auto kw_builtin_exprs = lexy::symbol_table<clauf::builtin_expr::builtin_t> //
                                       .map(LEXY_LIT("__clauf_print"), clauf::builtin_expr::print)
@@ -392,7 +399,8 @@ struct identifier
     static constexpr auto rule
         = id.reserve(kw_nullptr, dsl::literal_set(kw_type_ops), kw_return, kw_break, kw_continue,
                      kw_if, kw_else, kw_while, kw_do, dsl::literal_set(kw_decl_specifiers),
-                     dsl::literal_set(kw_type_qualifiers), dsl::literal_set(kw_builtin_exprs));
+                     dsl::literal_set(kw_type_qualifiers), kw_struct,
+                     dsl::literal_set(kw_builtin_exprs));
     static constexpr auto value = callback<clauf::name>([](compiler_state& state, auto lexeme) {
         auto symbol = state.ast.symbols.intern(lexeme.data(), lexeme.size());
 
@@ -604,7 +612,7 @@ struct type_with_specs
     std::optional<clauf::storage_duration> storage_duration;
     bool                                   is_constexpr;
 
-    bool is_valid_for_parameter() const
+    bool is_valid_for_parameter_or_member() const
     {
         return (!linkage || linkage == clauf::linkage::native) && !storage_duration
                && !is_constexpr;
@@ -692,41 +700,38 @@ struct builtin_expr
 struct expr : lexy::expression_production
 {
     // primary-expression
-    static constexpr auto atom
-        = [] {
-              auto id       = dsl::p<identifier_expr>;
-              auto constant = dsl::p<nullptr_constant_expr>                                   //
-                              | dsl::p<character_constant_expr> | dsl::p<string_literal_expr> //
-                              | dsl::else_ >> dsl::p<integer_constant_expr>;
+    static constexpr auto atom = [] {
+        auto id       = dsl::p<identifier_expr>;
+        auto constant = dsl::p<nullptr_constant_expr>                                   //
+                        | dsl::p<character_constant_expr> | dsl::p<string_literal_expr> //
+                        | dsl::else_ >> dsl::p<integer_constant_expr>;
 
-              // When we have a '(' in the beginning of an expression, it can be either (expr) or
-              // (type)expr. This can be distinguished by checking for a type name after the '(',
-              // which is not possible if cast were a regular prefix operator.
-              //
-              // We thus do it here as part of the primary-expression, even though it is not a
-              // primary-expression, but has lower precedence. However, no other operator matches
-              // before that, so it works out.
-              auto cast   = dsl::p<type_name_in_parens> >> dsl::recurse<unary_expr>;
-              auto parens = dsl::recurse<expr> + dsl::parenthesized.close();
-              auto paren_expr
-                  = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
+        // When we have a '(' in the beginning of an expression, it can be either (expr) or
+        // (type)expr. This can be distinguished by checking for a type name after the '(',
+        // which is not possible if cast were a regular prefix operator.
+        //
+        // We thus do it here as part of the primary-expression, even though it is not a
+        // primary-expression, but has lower precedence. However, no other operator matches
+        // before that, so it works out.
+        auto cast       = dsl::p<type_name_in_parens> >> dsl::recurse<unary_expr>;
+        auto parens     = dsl::recurse<expr> + dsl::parenthesized.close();
+        auto paren_expr = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
 
-              // sizeof/alignof are technically unary operators, but we can't parse them here since
-              // their operand is a type and not an expression. It should make no difference,
-              // however.
-              //
-              // Parse (type-name) or (expr) as operand of sizeof.
-              auto type_constant_operand_parens
+        // sizeof/alignof are technically unary operators, but we can't parse them here since
+        // their operand is a type and not an expression. It should make no difference,
+        // however.
+        //
+        // Parse (type-name) or (expr) as operand of sizeof.
+        auto type_constant_operand_parens
             = dsl::parenthesized.open() >> //
-              (dsl::p<
-                   type_name_in_parens> | dsl::else_ >> dsl::recurse<expr> + dsl::parenthesized.close());
-              auto type_constant_expr
-                  = dsl::position(dsl::symbol<kw_type_ops>)
-                    >> (type_constant_operand_parens | dsl::else_ >> dsl::recurse<unary_expr>);
+              (dsl::p<type_name_in_parens>
+               | dsl::else_ >> dsl::recurse<expr> + dsl::parenthesized.close());
+        auto type_constant_expr
+            = dsl::position(dsl::symbol<kw_type_ops>)
+              >> (type_constant_operand_parens | dsl::else_ >> dsl::recurse<unary_expr>);
 
-              return paren_expr | type_constant_expr | id
-                     | dsl::p<builtin_expr> | dsl::else_ >> constant;
-          }();
+        return paren_expr | type_constant_expr | id | dsl::p<builtin_expr> | dsl::else_ >> constant;
+    }();
 
     struct postfix : dsl::postfix_op
     {
@@ -1403,12 +1408,12 @@ struct block_stmt : lexy::scan_production<clauf::block_stmt*>
 
 struct stmt
 {
-    static constexpr auto rule
-        = dsl::p<block_stmt>                                                 //
-          | dsl::p<return_stmt> | dsl::p<break_stmt> | dsl::p<continue_stmt> //
-          | dsl::p<if_stmt>                                                  //
-          | dsl::p<while_stmt> | dsl::p<do_while_stmt>                       //
-          | dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
+    static constexpr auto rule = dsl::p<block_stmt> //
+                                 | dsl::p<return_stmt> | dsl::p<break_stmt>
+                                 | dsl::p<continue_stmt>                      //
+                                 | dsl::p<if_stmt>                            //
+                                 | dsl::p<while_stmt> | dsl::p<do_while_stmt> //
+                                 | dsl::p<decl_stmt> | dsl::else_ >> dsl::p<expr_stmt>;
     static constexpr auto value = lexy::forward<clauf::stmt*>;
 };
 } // namespace clauf::grammar
@@ -1417,10 +1422,12 @@ struct stmt
 namespace clauf::grammar
 {
 struct parameter_list;
+struct struct_specifier;
 
 struct decl_specifier_list
 {
-    static constexpr auto rule = dsl::position(dsl::list(dsl::symbol<kw_decl_specifiers>));
+    static constexpr auto rule = dsl::position(
+        dsl::list(dsl::symbol<kw_decl_specifiers> | dsl::recurse_branch<struct_specifier>));
     static constexpr auto value
         = lexy::as_list<std::vector<decl_specifier>> //
           >> callback<type_with_specs>([](compiler_state& state, const char* pos,
@@ -1435,11 +1442,11 @@ struct decl_specifier_list
                     char_,
                     int_,
                 };
-                std::optional<base_type_t> base_type;
-                std::optional<bool>        is_signed;
-                int                        short_count = 0;
-                int                        qualifiers  = clauf::qualified_type::unqualified;
-                clauf::native_specifier    native      = clauf::native_specifier::none;
+                std::optional<std::variant<base_type_t, clauf::decl_type*>> base_type;
+                std::optional<bool>                                         is_signed;
+                int                                                         short_count = 0;
+                int                     qualifiers = clauf::qualified_type::unqualified;
+                clauf::native_specifier native     = clauf::native_specifier::none;
 
                 auto log_error = [&] {
                     state.logger
@@ -1451,153 +1458,177 @@ struct decl_specifier_list
 
                 for (auto specifier : specifiers)
                 {
-                    switch (specifier)
+                    if (auto simple = std::get_if<simple_decl_specifier>(&specifier))
                     {
-                    case decl_specifier::auto_:
-                        if (storage_duration.has_value())
-                            log_error();
-                        storage_duration = clauf::storage_duration::automatic;
-                        break;
-                    case decl_specifier::constexpr_:
-                        if ((linkage.has_value() && linkage.value() != clauf::linkage::internal)
-                            || is_constexpr)
-                            log_error();
-                        is_constexpr = true;
-                        if (state.current_scope == &state.global_scope)
-                            linkage = clauf::linkage::internal;
-                        break;
-                    case decl_specifier::extern_:
-                        if (linkage.has_value())
-                            log_error();
-                        linkage = clauf::linkage::external;
-                        break;
-                    case decl_specifier::register_:
-                        if (storage_duration.has_value())
-                            log_error();
-                        storage_duration = clauf::storage_duration::register_;
-                        break;
-                    case decl_specifier::static_:
-                        if ((linkage.has_value() && linkage.value() != clauf::linkage::internal)
-                            || storage_duration.has_value())
-                            log_error();
-                        linkage          = clauf::linkage::internal;
-                        storage_duration = clauf::storage_duration::static_;
-                        break;
-                    case decl_specifier::clauf_native:
-                        if (linkage.has_value() || native != clauf::native_specifier::none)
-                            log_error();
-                        linkage = clauf::linkage::native;
-                        native  = clauf::native_specifier::default_;
-                        break;
-                    case decl_specifier::clauf_native_string:
-                        if (linkage.has_value() || native != clauf::native_specifier::none)
-                            log_error();
-                        linkage = clauf::linkage::native;
-                        native  = clauf::native_specifier::string;
-                        break;
+                        switch (*simple)
+                        {
+                        case simple_decl_specifier::auto_:
+                            if (storage_duration.has_value())
+                                log_error();
+                            storage_duration = clauf::storage_duration::automatic;
+                            break;
+                        case simple_decl_specifier::constexpr_:
+                            if ((linkage.has_value() && linkage.value() != clauf::linkage::internal)
+                                || is_constexpr)
+                                log_error();
+                            is_constexpr = true;
+                            if (state.current_scope == &state.global_scope)
+                                linkage = clauf::linkage::internal;
+                            break;
+                        case simple_decl_specifier::extern_:
+                            if (linkage.has_value())
+                                log_error();
+                            linkage = clauf::linkage::external;
+                            break;
+                        case simple_decl_specifier::register_:
+                            if (storage_duration.has_value())
+                                log_error();
+                            storage_duration = clauf::storage_duration::register_;
+                            break;
+                        case simple_decl_specifier::static_:
+                            if ((linkage.has_value() && linkage.value() != clauf::linkage::internal)
+                                || storage_duration.has_value())
+                                log_error();
+                            linkage          = clauf::linkage::internal;
+                            storage_duration = clauf::storage_duration::static_;
+                            break;
+                        case simple_decl_specifier::clauf_native:
+                            if (linkage.has_value() || native != clauf::native_specifier::none)
+                                log_error();
+                            linkage = clauf::linkage::native;
+                            native  = clauf::native_specifier::default_;
+                            break;
+                        case simple_decl_specifier::clauf_native_string:
+                            if (linkage.has_value() || native != clauf::native_specifier::none)
+                                log_error();
+                            linkage = clauf::linkage::native;
+                            native  = clauf::native_specifier::string;
+                            break;
 
-                    case decl_specifier::void_:
-                        if (base_type.has_value())
-                            log_error();
-                        base_type = base_type_t::void_;
-                        break;
-                    case decl_specifier::int_:
-                        if (base_type.has_value())
-                            log_error();
-                        base_type = base_type_t::int_;
-                        break;
-                    case decl_specifier::char_:
-                        if (base_type.has_value())
-                            log_error();
-                        base_type = base_type_t::char_;
-                        break;
-                    case decl_specifier::signed_:
-                        if (is_signed.has_value())
-                            log_error();
-                        is_signed = true;
-                        break;
-                    case decl_specifier::unsigned_:
-                        if (is_signed.has_value())
-                            log_error();
-                        is_signed = false;
-                        break;
-                    case decl_specifier::short_:
-                        if (short_count == 2)
-                            log_error();
-                        ++short_count;
-                        break;
+                        case simple_decl_specifier::void_:
+                            if (base_type.has_value())
+                                log_error();
+                            base_type = base_type_t::void_;
+                            break;
+                        case simple_decl_specifier::int_:
+                            if (base_type.has_value())
+                                log_error();
+                            base_type = base_type_t::int_;
+                            break;
+                        case simple_decl_specifier::char_:
+                            if (base_type.has_value())
+                                log_error();
+                            base_type = base_type_t::char_;
+                            break;
+                        case simple_decl_specifier::signed_:
+                            if (is_signed.has_value())
+                                log_error();
+                            is_signed = true;
+                            break;
+                        case simple_decl_specifier::unsigned_:
+                            if (is_signed.has_value())
+                                log_error();
+                            is_signed = false;
+                            break;
+                        case simple_decl_specifier::short_:
+                            if (short_count == 2)
+                                log_error();
+                            ++short_count;
+                            break;
 
-                    case decl_specifier::const_: {
-                        auto qual = clauf::qualified_type::const_;
-                        if ((qualifiers & qual) != 0)
-                            log_error();
-                        qualifiers |= qual;
-                        break;
+                        case simple_decl_specifier::const_: {
+                            auto qual = clauf::qualified_type::const_;
+                            if ((qualifiers & qual) != 0)
+                                log_error();
+                            qualifiers |= qual;
+                            break;
+                        }
+                        case simple_decl_specifier::volatile_: {
+                            auto qual = clauf::qualified_type::volatile_;
+                            if ((qualifiers & qual) != 0)
+                                log_error();
+                            qualifiers |= qual;
+                            break;
+                        }
+                        case simple_decl_specifier::restrict_: {
+                            auto qual = clauf::qualified_type::restrict_;
+                            if ((qualifiers & qual) != 0)
+                                log_error();
+                            qualifiers |= qual;
+                            break;
+                        }
+                        }
                     }
-                    case decl_specifier::volatile_: {
-                        auto qual = clauf::qualified_type::volatile_;
-                        if ((qualifiers & qual) != 0)
-                            log_error();
-                        qualifiers |= qual;
-                        break;
-                    }
-                    case decl_specifier::restrict_: {
-                        auto qual = clauf::qualified_type::restrict_;
-                        if ((qualifiers & qual) != 0)
-                            log_error();
-                        qualifiers |= qual;
-                        break;
-                    }
+                    else
+                    {
+                        auto struct_decl = std::get<clauf::struct_decl*>(specifier);
+                        base_type        = state.ast.create<clauf::decl_type>(struct_decl);
                     }
                 }
 
                 auto unqualified_ty = [&]() -> clauf::type* {
                     auto is_native = native != clauf::native_specifier::none;
-                    switch (base_type.value_or(base_type_t::int_))
+                    if (!base_type || std::holds_alternative<base_type_t>(*base_type))
                     {
-                    case base_type_t::void_:
-                        if (is_signed.has_value())
+                        switch (std::get<base_type_t>(base_type.value_or(base_type_t::int_)))
+                        {
+                        case base_type_t::void_:
+                            if (is_signed.has_value())
+                                log_error();
+
+                            return state.ast.types.lookup_or_create<clauf::builtin_type>(
+                                clauf::builtin_type::void_);
+
+                        case base_type_t::char_:
+                            if (short_count > 0)
+                                log_error();
+
+                            if (!is_signed.has_value())
+                                return state.ast.create(clauf::builtin_type::char_);
+                            else if (is_signed.value())
+                                return state.ast.create(clauf::builtin_type::sint8);
+                            else
+                                return state.ast.create(clauf::builtin_type::uint8);
+
+                        case base_type_t::int_:
+                            if (is_signed.value_or(true))
+                            {
+                                if (short_count == 0)
+                                    return state.ast.create(is_native
+                                                                ? clauf::builtin_type::sint32
+                                                                : clauf::builtin_type::sint64);
+                                else if (short_count == 1)
+                                    return state.ast.create(is_native
+                                                                ? clauf::builtin_type::sint16
+                                                                : clauf::builtin_type::sint32);
+                                else
+                                    return state.ast.create(is_native
+                                                                ? clauf::builtin_type::sint8
+                                                                : clauf::builtin_type::sint16);
+                            }
+                            else
+                            {
+                                if (short_count == 0)
+                                    return state.ast.create(is_native
+                                                                ? clauf::builtin_type::uint32
+                                                                : clauf::builtin_type::uint64);
+                                else if (short_count == 1)
+                                    return state.ast.create(is_native
+                                                                ? clauf::builtin_type::uint16
+                                                                : clauf::builtin_type::uint32);
+                                else
+                                    return state.ast.create(is_native
+                                                                ? clauf::builtin_type::uint8
+                                                                : clauf::builtin_type::uint16);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (is_signed.has_value() || short_count > 0)
                             log_error();
 
-                        return state.ast.types.lookup_or_create<clauf::builtin_type>(
-                            clauf::builtin_type::void_);
-
-                    case base_type_t::char_:
-                        if (short_count > 0)
-                            log_error();
-
-                        if (!is_signed.has_value())
-                            return state.ast.create(clauf::builtin_type::char_);
-                        else if (is_signed.value())
-                            return state.ast.create(clauf::builtin_type::sint8);
-                        else
-                            return state.ast.create(clauf::builtin_type::uint8);
-
-                    case base_type_t::int_:
-                        if (is_signed.value_or(true))
-                        {
-                            if (short_count == 0)
-                                return state.ast.create(is_native ? clauf::builtin_type::sint32
-                                                                  : clauf::builtin_type::sint64);
-                            else if (short_count == 1)
-                                return state.ast.create(is_native ? clauf::builtin_type::sint16
-                                                                  : clauf::builtin_type::sint32);
-                            else
-                                return state.ast.create(is_native ? clauf::builtin_type::sint8
-                                                                  : clauf::builtin_type::sint16);
-                        }
-                        else
-                        {
-                            if (short_count == 0)
-                                return state.ast.create(is_native ? clauf::builtin_type::uint32
-                                                                  : clauf::builtin_type::uint64);
-                            else if (short_count == 1)
-                                return state.ast.create(is_native ? clauf::builtin_type::uint16
-                                                                  : clauf::builtin_type::uint32);
-                            else
-                                return state.ast.create(is_native ? clauf::builtin_type::uint8
-                                                                  : clauf::builtin_type::uint16);
-                        }
+                        return std::get<clauf::decl_type*>(*base_type);
                     }
                 }();
 
@@ -1625,7 +1656,7 @@ struct decl_specifier_list
 struct type_qualifier_list
 {
     static constexpr auto rule  = dsl::list(dsl::symbol<kw_type_qualifiers>);
-    static constexpr auto value = lexy::as_list<std::vector<decl_specifier>>;
+    static constexpr auto value = lexy::as_list<std::vector<simple_decl_specifier>>;
 };
 
 template <bool Abstract>
@@ -1697,20 +1728,21 @@ struct declarator : lexy::expression_production
            clauf::parameter_list params) {
             return state.decl_tree.create<clauf::function_declarator>(child, params);
         },
-        [](compiler_state&                                   state, pointer_declarator,
-           const std::optional<std::vector<decl_specifier>>& quals, clauf::declarator* child) {
+        [](compiler_state&                                          state, pointer_declarator,
+           const std::optional<std::vector<simple_decl_specifier>>& quals,
+           clauf::declarator*                                       child) {
             int qual = clauf::qualified_type::unqualified;
             if (quals)
                 for (auto q : quals.value())
                     switch (q)
                     {
-                    case decl_specifier::const_:
+                    case simple_decl_specifier::const_:
                         qual |= clauf::qualified_type::const_;
                         break;
-                    case decl_specifier::volatile_:
+                    case simple_decl_specifier::volatile_:
                         qual |= clauf::qualified_type::volatile_;
                         break;
-                    case decl_specifier::restrict_:
+                    case simple_decl_specifier::restrict_:
                         qual |= clauf::qualified_type::restrict_;
                         break;
 
@@ -1722,6 +1754,65 @@ struct declarator : lexy::expression_production
             return state.decl_tree
                 .create<clauf::pointer_declarator>(clauf::qualified_type::qualifier_t(qual), child);
         });
+};
+
+struct member_decl
+{
+    static constexpr auto rule
+        = dsl::position + dsl::p<decl_specifier_list> + dsl::p<declarator<true>>;
+    static constexpr auto value
+        = callback<clauf::member_decl*>([](compiler_state& state, const char* pos,
+                                           type_with_specs ty_spec, clauf::declarator* decl) {
+              auto name = get_name(decl);
+              auto type = get_type(state.ast.types, decl, ty_spec.native, ty_spec.type);
+              if (type == nullptr)
+              {
+                  state.logger
+                      .log(clauf::diagnostic_kind::error,
+                           "invalid combination of base type and declarator")
+                      .annotation(clauf::annotation_kind::primary, pos, "here")
+                      .finish();
+                  throw fatal_error();
+              }
+
+              if (!ty_spec.is_valid_for_parameter_or_member())
+              {
+                  state.logger
+                      .log(clauf::diagnostic_kind::error,
+                           "invalid use of storage class specifier on member declaration")
+                      .annotation(clauf::annotation_kind::primary, name.loc,
+                                  "used to declare parameter here")
+                      .finish();
+              }
+
+              if (!clauf::is_complete_object_type(type))
+              {
+                  state.logger
+                      .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
+                      .annotation(clauf::annotation_kind::primary, name.loc,
+                                  "used to declare member here")
+                      .finish();
+              }
+
+              return state.ast.create<clauf::member_decl>(name.loc, name.symbol, type);
+          });
+};
+
+struct struct_specifier
+{
+    static constexpr auto rule
+        = kw_struct >> dsl::p<identifier<false>>
+                           + dsl::curly_bracketed.list(dsl::p<member_decl> + dsl::semicolon);
+    static constexpr auto value
+        = lexy::as_list<clauf::member_list> >> callback<clauf::struct_decl*>(
+              [](compiler_state& state, clauf::name name, clauf::member_list members) {
+                  auto result = state.ast.create<clauf::struct_decl>(name.loc, name.symbol,
+                                                                     state.ast.types, members);
+                  result->make_definition();
+
+                  state.structs.push_back(result);
+                  return result;
+              });
 };
 
 struct parameter_decl
@@ -1743,7 +1834,7 @@ struct parameter_decl
                   throw fatal_error();
               }
 
-              if (!ty_spec.is_valid_for_parameter())
+              if (!ty_spec.is_valid_for_parameter_or_member())
               {
                   state.logger
                       .log(clauf::diagnostic_kind::error,
@@ -2268,6 +2359,8 @@ try
         return std::nullopt;
 
     state.ast.tree.set_root(result.value());
+    state.ast.tree.root()->add_structs(state.structs);
+
     if (!resolve_forward_declarations(state))
         return std::nullopt;
 

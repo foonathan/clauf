@@ -65,7 +65,8 @@ const lauf_asm_type* codegen_lauf_type(const clauf::type* ty)
         [](const clauf::pointer_type*) { return &lauf_asm_type_value; },
         [](const clauf::array_type*) { return nullptr; },
         [](const clauf::function_type*) { return nullptr; },
-        [](const clauf::qualified_type* ty) { return codegen_lauf_type(ty->unqualified_type()); });
+        [](const clauf::qualified_type* ty) { return codegen_lauf_type(ty->unqualified_type()); },
+        [](const clauf::decl_type*) { return nullptr; });
 }
 
 // INVARIANT: the resulting layout has a size that is a multiple of alignment.
@@ -75,6 +76,16 @@ lauf_asm_layout codegen_lauf_layout(const clauf::type* ty)
     {
         auto element_layout = codegen_lauf_layout(array_ty->element_type());
         return lauf_asm_array_layout(element_layout, array_ty->size());
+    }
+    else if (auto decl_ty = dryad::node_try_cast<clauf::decl_type>(ty))
+    {
+        auto decl = dryad::node_cast<clauf::struct_decl>(decl_ty->decl());
+
+        std::vector<lauf_asm_layout> members;
+        for (auto member : decl->members())
+            members.push_back(codegen_lauf_layout(member->type()));
+
+        return lauf_asm_aggregate_layout(members.data(), members.size());
     }
     else
     {
@@ -1390,7 +1401,7 @@ try
                 _chunk_builder,
                 &_globals,
                 &_functions,
-                {}};
+                    {}};
     clauf::code code(_mod);
 
     // Generate body for all lauf declarations.

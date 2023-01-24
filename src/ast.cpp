@@ -31,6 +31,9 @@ clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
         [&](const clauf::qualified_type* ty) -> clauf::type* {
             auto unqual_ty = clone(creator, ty->unqualified_type());
             return creator.create<clauf::qualified_type>(ty->qualifiers(), unqual_ty);
+        },
+        [&](const clauf::decl_type* ty) -> clauf::type* {
+            return creator.create<clauf::decl_type>(ty->decl());
         });
 }
 
@@ -68,6 +71,16 @@ bool clauf::is_same(const type* lhs, const type* rhs)
 {
     if (lhs == rhs)
         return true;
+    if (lhs->kind() != rhs->kind())
+        return false;
+
+    auto kind = lhs->kind();
+    if (kind == clauf::type_node_kind::decl_type)
+        // Two decl types are the same if they have the same name.
+        // (The actual pointer to the declaration might differ if they point to different forward
+        // declarations of the same struct.)
+        return dryad::node_cast<clauf::decl_type>(lhs)->decl()->name()
+               == dryad::node_cast<clauf::decl_type>(rhs)->decl()->name();
 
     return type_hasher::is_equal_base(lhs, rhs);
 }
@@ -187,6 +200,8 @@ bool clauf::is_complete_object_type(const type* ty_)
         return false;
     else if (auto array = dryad::node_try_cast<clauf::array_type>(ty))
         return !array->is_incomplete();
+    else if (auto decl = dryad::node_try_cast<clauf::decl_type>(ty))
+        return decl->decl()->has_definition();
 
     return !clauf::is_void(ty);
 }
@@ -613,13 +628,17 @@ const char* to_string(clauf::node_kind kind)
         return "variable decl";
     case clauf::node_kind::parameter_decl:
         return "parameter decl";
+    case clauf::node_kind::member_decl:
+        return "member decl";
     case clauf::node_kind::function_decl:
         return "function decl";
+    case clauf::node_kind::struct_decl:
+        return "struct decl";
     }
 }
 } // namespace
 
-void clauf::dump_type(const clauf::type* ty)
+void clauf::dump_type(const ast_symbol_interner& symbols, const clauf::type* ty)
 {
     dryad::visit_tree(
         ty,
@@ -700,7 +719,8 @@ void clauf::dump_type(const clauf::type* ty)
                 std::printf("volatile ");
             if ((ty->qualifiers() & clauf::qualified_type::restrict_) != 0)
                 std::printf("restrict ");
-        });
+        },
+        [&](const clauf::decl_type* ty) { std::printf("%s", ty->decl()->name().c_str(symbols)); });
 }
 
 void clauf::dump_ast(const ast& ast)
@@ -723,11 +743,11 @@ void clauf::dump_ast(const ast& ast)
             //=== expr ===//
             [&](const integer_constant_expr* expr) {
                 std::printf("%ld : ", expr->value());
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
             [&](const string_literal_expr* expr) {
                 std::printf("'%s' : ", expr->value());
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
             [&](const type_constant_expr* expr) {
                 switch (expr->op())
@@ -739,7 +759,7 @@ void clauf::dump_ast(const ast& ast)
                     std::printf("alignof ");
                     break;
                 }
-                dump_type(expr->operand_type());
+                dump_type(ast.symbols, expr->operand_type());
             },
             [&](const builtin_expr* expr) {
                 switch (expr->builtin())
@@ -760,10 +780,10 @@ void clauf::dump_ast(const ast& ast)
             },
             [&](const identifier_expr* expr) {
                 std::printf("'%s' : ", expr->declaration()->name().c_str(ast.symbols));
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
-            [&](const cast_expr* expr) { dump_type(expr->type()); },
-            [&](const decay_expr* expr) { dump_type(expr->type()); },
+            [&](const cast_expr* expr) { dump_type(ast.symbols, expr->type()); },
+            [&](const decay_expr* expr) { dump_type(ast.symbols, expr->type()); },
             [&](const unary_expr* expr) {
                 switch (expr->op())
                 {
@@ -801,7 +821,7 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
                 std::printf(" : ");
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
             [&](const arithmetic_expr* expr) {
                 switch (expr->op())
@@ -841,7 +861,7 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
                 std::printf(" : ");
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
             [&](const comparison_expr* expr) {
                 switch (expr->op())
@@ -866,7 +886,7 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
                 std::printf(" : ");
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
             [&](const sequenced_expr* expr) {
                 switch (expr->op())
@@ -882,7 +902,7 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
                 std::printf(" : ");
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
             [&](const assignment_expr* expr) {
                 switch (expr->op())
@@ -923,7 +943,7 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
                 std::printf(" : ");
-                dump_type(expr->type());
+                dump_type(ast.symbols, expr->type());
             },
             //=== stmt ===//
             [&](const while_stmt* stmt) {
@@ -954,7 +974,7 @@ void clauf::dump_ast(const ast& ast)
                     break;
                 }
                 std::printf("'%s' : ", d->name().c_str(ast.symbols));
-                dump_type(d->type());
+                dump_type(ast.symbols, d->type());
 
                 if (auto var = dryad::node_try_cast<variable_decl>(d))
                 {

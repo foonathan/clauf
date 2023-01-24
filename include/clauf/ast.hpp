@@ -31,6 +31,7 @@ enum class type_node_kind
     array_type,
     function_type,
     qualified_type,
+    decl_type,
 };
 
 /// The base class of all C types in the AST.
@@ -169,8 +170,25 @@ private:
     DRYAD_ATTRIBUTE_USER_DATA16(qualifier_t, qualifiers_impl);
 };
 
+class decl;
+
+/// The type created by a declaration.
+class decl_type : public dryad::basic_node<type_node_kind::decl_type, type>
+{
+public:
+    explicit decl_type(dryad::node_ctor ctor, const clauf::decl* d) : node_base(ctor), _decl(d) {}
+
+    const clauf::decl* decl() const
+    {
+        return _decl;
+    }
+
+private:
+    const clauf::decl* _decl;
+};
+
 struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_type, array_type,
-                                             function_type, qualified_type>
+                                             function_type, qualified_type, decl_type>
 {
     template <typename HashAlgorithm>
     static void hash(HashAlgorithm& hasher, const builtin_type* n)
@@ -200,6 +218,11 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
     {
         hasher.hash_scalar(ty->qualifiers());
     }
+    template <typename HashAlgorithm>
+    static void hash(HashAlgorithm& hasher, const decl_type* ty)
+    {
+        hasher.hash_scalar(ty->decl());
+    }
 
     static bool is_equal(const builtin_type* lhs, const builtin_type* rhs)
     {
@@ -224,6 +247,10 @@ struct type_hasher : dryad::node_hasher_base<type_hasher, builtin_type, pointer_
     static bool is_equal(const qualified_type* lhs, const qualified_type* rhs)
     {
         return lhs->qualifiers() == rhs->qualifiers();
+    }
+    static bool is_equal(const decl_type* lhs, const decl_type* rhs)
+    {
+        return lhs->decl() == rhs->decl();
     }
 };
 using type_forest = dryad::hash_forest<type, type_hasher>;
@@ -305,10 +332,12 @@ enum class node_kind
     //=== declarations ===//
     variable_decl,
     parameter_decl,
+    member_decl,
     function_decl,
+    struct_decl,
 
     first_decl = variable_decl,
-    last_decl  = function_decl,
+    last_decl  = struct_decl,
 };
 
 using node = dryad::node<node_kind>;
@@ -1093,6 +1122,17 @@ public:
 
 using parameter_list = dryad::unlinked_node_list<parameter_decl>;
 
+/// A member declaration.
+class member_decl : public dryad::basic_node<node_kind::member_decl, decl>
+{
+public:
+    explicit member_decl(dryad::node_ctor ctor, ast_symbol name, const clauf::type* type)
+    : node_base(ctor, name, type)
+    {}
+};
+
+using member_list = dryad::unlinked_node_list<member_decl>;
+
 /// A function declaration.
 class function_decl : public dryad::basic_node<node_kind::function_decl, decl>
 {
@@ -1134,6 +1174,20 @@ public:
 
 private:
     node* _last_param;
+};
+
+/// A struct declaration.
+class struct_decl : public dryad::basic_node<node_kind::struct_decl, decl>
+{
+public:
+    explicit struct_decl(dryad::node_ctor ctor, ast_symbol name, type_forest& types,
+                         member_list members)
+    : node_base(ctor, name, types.create<clauf::decl_type>(this))
+    {
+        insert_child_list_after(nullptr, members);
+    }
+
+    DRYAD_CHILD_NODE_RANGE_GETTER(member_decl, members, nullptr, this)
 };
 } // namespace clauf
 
@@ -1274,6 +1328,11 @@ public:
         insert_child_list_after(nullptr, decls);
     }
 
+    void add_structs(dryad::unlinked_node_list<clauf::struct_decl> decls)
+    {
+        insert_child_list_after(nullptr, decls);
+    }
+
     DRYAD_CHILD_NODE_RANGE_GETTER(decl, declarations, nullptr, this)
 };
 
@@ -1314,7 +1373,7 @@ struct ast
     }
 };
 
-void dump_type(const clauf::type* ty);
+void dump_type(const ast_symbol_interner& symbols, const clauf::type* ty);
 void dump_ast(const ast& ast);
 } // namespace clauf
 
