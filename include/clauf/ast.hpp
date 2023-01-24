@@ -309,6 +309,7 @@ enum class node_kind
     last_expr  = conditional_expr,
 
     //=== statements ===//
+    null_stmt,
     decl_stmt,
     expr_stmt,
     return_stmt,
@@ -318,7 +319,7 @@ enum class node_kind
     while_stmt,
     block_stmt,
 
-    first_stmt = decl_stmt,
+    first_stmt = null_stmt,
     last_stmt  = block_stmt,
 
     //=== initializers ===//
@@ -772,6 +773,13 @@ class stmt : public dryad::abstract_node_range<dryad::container_node<node>, node
 {
 public:
     DRYAD_ABSTRACT_NODE_CTOR(stmt)
+};
+
+/// A statement that does nothing.
+class null_stmt : public dryad::basic_node<node_kind::null_stmt, stmt>
+{
+public:
+    explicit null_stmt(dryad::node_ctor ctor) : node_base(ctor) {}
 };
 
 /// A statement that declares (multiple) things e.g. `int i, j;`

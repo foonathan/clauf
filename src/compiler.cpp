@@ -1265,8 +1265,11 @@ struct declaration;
 struct decl_stmt
 {
     static constexpr auto rule  = dsl::position(dsl::recurse_branch<declaration>);
-    static constexpr auto value = callback<clauf::decl_stmt*>(
-        [](compiler_state& state, clauf::location loc, decl_list decls) {
+    static constexpr auto value = callback<clauf::stmt*>(
+        [](compiler_state& state, clauf::location loc, decl_list decls) -> clauf::stmt* {
+            if (decls.empty())
+                return state.ast.create<clauf::null_stmt>(loc);
+
             auto result = state.ast.create<clauf::decl_stmt>(loc, decls);
             for (auto decl : result->declarations())
             {

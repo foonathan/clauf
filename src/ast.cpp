@@ -602,6 +602,8 @@ const char* to_string(clauf::node_kind kind)
         return "assignment expr";
     case clauf::node_kind::conditional_expr:
         return "conditional expr";
+    case clauf::node_kind::null_stmt:
+        return "null stmt";
     case clauf::node_kind::decl_stmt:
         return "decl stmt";
     case clauf::node_kind::expr_stmt:
