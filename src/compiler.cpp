@@ -1414,9 +1414,18 @@ struct block_stmt : lexy::scan_production<clauf::block_stmt*>
     }
 };
 
+struct null_stmt
+{
+    static constexpr auto rule = dsl::position(dsl::semicolon);
+    static constexpr auto value
+        = callback<clauf::null_stmt*>([](compiler_state& state, const char* pos) {
+              return state.ast.create<clauf::null_stmt>(pos);
+          });
+};
+
 struct stmt
 {
-    static constexpr auto rule = dsl::p<block_stmt> //
+    static constexpr auto rule = dsl::p<null_stmt> | dsl::p<block_stmt> //
                                  | dsl::p<return_stmt> | dsl::p<break_stmt>
                                  | dsl::p<continue_stmt>                      //
                                  | dsl::p<if_stmt>                            //
