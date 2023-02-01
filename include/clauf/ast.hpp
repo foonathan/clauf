@@ -296,6 +296,7 @@ enum class node_kind
     builtin_expr,
     identifier_expr,
     function_call_expr,
+    member_access_expr,
     cast_expr,
     decay_expr,
     unary_expr,
@@ -589,6 +590,30 @@ public:
 
     DRYAD_CHILD_NODE_GETTER(expr, function, nullptr)
     DRYAD_CHILD_NODE_RANGE_GETTER(expr, arguments, function(), this)
+};
+
+/// A member access expression.
+class member_access_expr : public dryad::basic_node<node_kind::member_access_expr, expr>
+{
+public:
+    explicit member_access_expr(dryad::node_ctor ctor, const clauf::type* type, clauf::expr* obj,
+                                ast_symbol name)
+    : node_base(ctor, type), _name(name)
+    {
+        insert_child_after(nullptr, obj);
+    }
+
+    DRYAD_CHILD_NODE_GETTER(expr, object, nullptr)
+
+    const decl* object_type_definition() const;
+
+    ast_symbol member_name() const
+    {
+        return _name;
+    }
+
+private:
+    ast_symbol _name;
 };
 
 /// A cast expression or implicit conversion.
@@ -1203,6 +1228,11 @@ public:
     {
         insert_child_list_after(nullptr, members);
         make_definition();
+    }
+
+    const struct_decl* definition() const
+    {
+        return dryad::node_cast<struct_decl>(decl::definition());
     }
 
     DRYAD_CHILD_NODE_RANGE_GETTER(member_decl, members, nullptr, this)

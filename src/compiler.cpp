@@ -770,6 +770,7 @@ struct expr : lexy::expression_production
     {
         static constexpr auto op = op_(LEXY_LIT("(") >> dsl::p<argument_list>)
                                    / op_(dsl::square_bracketed(dsl::recurse<expr>))
+                                   / op_(dsl::period >> dsl::p<identifier<false>>)
                                    / op_<clauf::unary_op::post_inc>(LEXY_LIT("++"))
                                    / op_<clauf::unary_op::post_dec>(LEXY_LIT("--"));
         using operand = dsl::atom;
@@ -1056,6 +1057,45 @@ struct expr : lexy::expression_production
 
             return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
                                                                converted_arguments);
+        },
+        [](compiler_state& state, clauf::expr* object, op_tag<> op, clauf::name member_name) {
+            auto object_type = object->type();
+
+            auto struct_decl = [&]() -> const clauf::struct_decl* {
+                auto decl_type = dryad::node_try_cast<clauf::decl_type>(object_type);
+                if (decl_type == nullptr)
+                    return nullptr;
+
+                return dryad::node_try_cast<clauf::struct_decl>(decl_type->decl());
+            }();
+            if (struct_decl == nullptr || !struct_decl->has_definition())
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "cannot do member access on this expr")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "member access")
+                    .finish();
+                throw fatal_error();
+            }
+
+            auto member = [&]() -> const clauf::member_decl* {
+                for (auto mem : struct_decl->definition()->members())
+                    if (mem->name() == member_name.symbol)
+                        return mem;
+
+                return nullptr;
+            }();
+            if (member == nullptr)
+            {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "unknown member '%s' in member access",
+                         member_name.symbol.c_str(state.ast.symbols))
+                    .annotation(clauf::annotation_kind::primary, op.loc, "member access")
+                    .finish();
+                throw fatal_error();
+            }
+
+            return state.ast.create<clauf::member_access_expr>(op.loc, member->type(), object,
+                                                               member_name.symbol);
         },
         // This is called for ptr[index]
         [](compiler_state& state, clauf::expr* ptr, op_tag<> op, clauf::expr* index) {

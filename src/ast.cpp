@@ -262,9 +262,15 @@ unsigned clauf::integer_rank_of(const type* ty)
     }
 }
 
+const clauf::decl* clauf::member_access_expr::object_type_definition() const
+{
+    return dryad::node_cast<decl_type>(object()->type())->decl()->definition();
+}
+
 bool clauf::is_lvalue(const expr* e)
 {
     if (dryad::node_has_kind<clauf::identifier_expr>(e)
+        || dryad::node_has_kind<clauf::member_access_expr>(e)
         || dryad::node_has_kind<clauf::string_literal_expr>(e))
         return true;
     else if (auto unary = dryad::node_try_cast<clauf::unary_expr>(e))
@@ -290,7 +296,8 @@ bool clauf::is_lvalue_with_address(const expr* e)
     }
     else if (auto unary = dryad::node_try_cast<clauf::unary_expr>(e))
         return unary->op() == clauf::unary_op::deref;
-    else if (dryad::node_has_kind<clauf::string_literal_expr>(e))
+    else if (dryad::node_has_kind<clauf::string_literal_expr>(e)
+             || dryad::node_has_kind<clauf::member_access_expr>(e))
         return true;
     else
         return false;
@@ -298,13 +305,15 @@ bool clauf::is_lvalue_with_address(const expr* e)
 
 bool clauf::is_static_lvalue(const expr* e)
 {
-    if (auto id = dryad::node_try_cast<identifier_expr>(e))
+    if (auto id = dryad::node_try_cast<clauf::identifier_expr>(e))
     {
-        if (auto var = dryad::node_try_cast<variable_decl>(id->declaration()))
+        if (auto var = dryad::node_try_cast<clauf::variable_decl>(id->declaration()))
             return var->storage_duration() == clauf::storage_duration::static_;
-        else if (dryad::node_has_kind<function_decl>(id->declaration()))
+        else if (dryad::node_has_kind<clauf::function_decl>(id->declaration()))
             return true;
     }
+    else if (auto member = dryad::node_try_cast<clauf::member_access_expr>(e))
+        return is_static_lvalue(member->object());
     else if (dryad::node_has_kind<clauf::string_literal_expr>(e))
         return true;
 
@@ -586,6 +595,8 @@ const char* to_string(clauf::node_kind kind)
         return "identifier expr";
     case clauf::node_kind::function_call_expr:
         return "function call expr";
+    case clauf::node_kind::member_access_expr:
+        return "member access expr";
     case clauf::node_kind::decay_expr:
         return "decay expr";
     case clauf::node_kind::cast_expr:
@@ -782,6 +793,10 @@ void clauf::dump_ast(const ast& ast)
             },
             [&](const identifier_expr* expr) {
                 std::printf("'%s' : ", expr->declaration()->name().c_str(ast.symbols));
+                dump_type(ast.symbols, expr->type());
+            },
+            [&](const member_access_expr* expr) {
+                std::printf("'%s' : ", expr->member_name().c_str(ast.symbols));
                 dump_type(ast.symbols, expr->type());
             },
             [&](const cast_expr* expr) { dump_type(ast.symbols, expr->type()); },
