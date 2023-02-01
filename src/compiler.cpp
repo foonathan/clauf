@@ -1818,15 +1818,21 @@ struct member_decl
 struct struct_specifier
 {
     static constexpr auto rule
-        = kw_struct >> dsl::p<identifier<false>>
-                           + dsl::curly_bracketed.list(dsl::p<member_decl> + dsl::semicolon);
+        = kw_struct
+          >> dsl::p<identifier<false>>
+                 + dsl::opt(dsl::curly_bracketed.list(dsl::p<member_decl> + dsl::semicolon));
+
     static constexpr auto value
         = lexy::as_list<clauf::member_list> >> callback<clauf::struct_decl*>(
+              [](compiler_state& state, clauf::name name, lexy::nullopt) {
+                  auto result = state.ast.create<clauf::struct_decl>(name.loc, name.symbol,
+                                                                     state.ast.types);
+                  state.structs.push_back(result);
+                  return result;
+              },
               [](compiler_state& state, clauf::name name, clauf::member_list members) {
                   auto result = state.ast.create<clauf::struct_decl>(name.loc, name.symbol,
                                                                      state.ast.types, members);
-                  result->make_definition();
-
                   state.structs.push_back(result);
                   return result;
               });

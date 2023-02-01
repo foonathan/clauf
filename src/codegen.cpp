@@ -79,7 +79,7 @@ lauf_asm_layout codegen_lauf_layout(const clauf::type* ty)
     }
     else if (auto decl_ty = dryad::node_try_cast<clauf::decl_type>(ty))
     {
-        auto decl = dryad::node_cast<clauf::struct_decl>(decl_ty->decl());
+        auto decl = dryad::node_cast<clauf::struct_decl>(decl_ty->decl()->definition());
 
         std::vector<lauf_asm_layout> members;
         for (auto member : decl->members())

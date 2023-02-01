@@ -1188,11 +1188,19 @@ private:
 class struct_decl : public dryad::basic_node<node_kind::struct_decl, decl>
 {
 public:
-    explicit struct_decl(dryad::node_ctor ctor, ast_symbol name, type_forest& types,
-                         member_list members)
+    explicit struct_decl(dryad::node_ctor ctor, ast_symbol name, type_forest& types)
     : node_base(ctor, name, types.create<clauf::decl_type>(this))
     {
+        // We need external linkage in order to trigger forward declaration resolution.
+        set_linkage_impl(clauf::linkage::external);
+    }
+
+    explicit struct_decl(dryad::node_ctor ctor, ast_symbol name, type_forest& types,
+                         member_list members)
+    : struct_decl(ctor, name, types)
+    {
         insert_child_list_after(nullptr, members);
+        make_definition();
     }
 
     DRYAD_CHILD_NODE_RANGE_GETTER(member_decl, members, nullptr, this)
