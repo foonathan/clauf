@@ -68,6 +68,27 @@ struct compiler_state
     }
 };
 
+clauf::ast_symbol get_struct_name(compiler_state& state, clauf::ast_symbol name)
+{
+    auto str         = name.c_str(state.ast.symbols);
+    auto struct_name = std::string("struct ") + str;
+    return state.ast.symbols.intern(struct_name.c_str(), struct_name.length());
+}
+
+clauf::decl* name_lookup(compiler_state& state, bool is_struct, clauf::name name)
+{
+    auto symbol = is_struct ? get_struct_name(state, name.symbol) : name.symbol;
+
+    clauf::decl* decl = nullptr;
+    for (auto scope = state.current_scope; scope != nullptr; scope = scope->parent)
+    {
+        decl = scope->symbols.lookup(symbol);
+        if (decl != nullptr)
+            break;
+    }
+    return decl;
+}
+
 void insert_new_decl(compiler_state& state, clauf::decl* decl)
 {
     // Check that we're allowed to add a declaration here.
@@ -78,23 +99,33 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
             .finish();
     }
 
-    auto shadowed = state.current_scope->symbols.insert_or_shadow(decl->name(), decl);
+    auto name     = dryad::node_has_kind<clauf::struct_decl>(decl)
+                        ? get_struct_name(state, decl->name())
+                        : decl->name();
+    auto shadowed = state.current_scope->symbols.insert_or_shadow(name, decl);
     if (shadowed == nullptr)
         return;
 
     // Check for duplicate definition.
-    if (shadowed->has_definition() && decl->has_definition())
+    if (shadowed->is_definition() && decl->is_definition())
     {
-        auto name = decl->name().c_str(state.ast.symbols);
+        auto str = name.c_str(state.ast.symbols);
         state.logger
             .log(clauf::diagnostic_kind::error, "duplicate %s definition '%s'",
-                 state.current_scope->kind == scope::global ? "global" : "local", name)
+                 state.current_scope->kind == scope::global ? "global" : "local", str)
             .annotation(clauf::annotation_kind::secondary, state.ast.input.location_of(shadowed),
                         "first declaration")
             .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(decl),
                         "second declaration")
             .finish();
         return;
+    }
+    // The struct code assumes that we keep definitions in the symbol table.
+    else if (shadowed->is_definition() && !decl->is_definition())
+    {
+        // Put the definition back into the symbol table.
+        auto result = state.current_scope->symbols.insert_or_shadow(name, shadowed);
+        CLAUF_ASSERT(result == decl, "decl is the one we inserted above");
     }
 }
 
@@ -571,26 +602,20 @@ struct identifier_expr
 {
     static constexpr auto rule = dsl::p<identifier<true>>;
 
-    static constexpr auto value
-        = callback<clauf::identifier_expr*>([](compiler_state& state, clauf::name name) {
-              clauf::decl* decl = nullptr;
-              for (auto scope = state.current_scope; scope != nullptr; scope = scope->parent)
-              {
-                  decl = scope->symbols.lookup(name.symbol);
-                  if (decl != nullptr)
-                      break;
-              }
+    static constexpr auto value = callback<clauf::identifier_expr*>(
+        [](compiler_state& state, clauf::name name) -> clauf::identifier_expr* {
+            auto decl = name_lookup(state, false, name);
+            if (decl == nullptr)
+            {
+                auto str = name.symbol.c_str(state.ast.symbols);
+                state.logger.log(clauf::diagnostic_kind::error, "unknown identifier '%s'", str)
+                    .annotation(clauf::annotation_kind::primary, name.loc, "used here")
+                    .finish();
+                return nullptr;
+            }
 
-              if (decl == nullptr)
-              {
-                  auto str = name.symbol.c_str(state.ast.symbols);
-                  state.logger.log(diagnostic_kind::error, "unknown identifier '%s'", str)
-                      .annotation(annotation_kind::primary, name.loc, "used here")
-                      .finish();
-              }
-
-              return state.ast.create<clauf::identifier_expr>(name.loc, decl->type(), decl);
-          });
+            return state.ast.create<clauf::identifier_expr>(name.loc, decl->type(), decl);
+        });
 };
 
 struct argument_list
@@ -1827,12 +1852,17 @@ struct struct_specifier
               [](compiler_state& state, clauf::name name, lexy::nullopt) {
                   auto result = state.ast.create<clauf::struct_decl>(name.loc, name.symbol,
                                                                      state.ast.types);
+                  if (auto def = name_lookup(state, true, name))
+                      result->set_definition(def);
+
+                  insert_new_decl(state, result);
                   state.structs.push_back(result);
                   return result;
               },
               [](compiler_state& state, clauf::name name, clauf::member_list members) {
                   auto result = state.ast.create<clauf::struct_decl>(name.loc, name.symbol,
                                                                      state.ast.types, members);
+                  insert_new_decl(state, result);
                   state.structs.push_back(result);
                   return result;
               });
