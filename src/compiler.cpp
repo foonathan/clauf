@@ -34,6 +34,8 @@ struct scope
         local_if,
         // The local scope of a loop; here break and continue is allowed.
         local_loop,
+        // The scope of a struct declaration.
+        struct_,
     } kind;
     dryad::symbol_table<clauf::ast_symbol, clauf::decl*> symbols;
     scope*                                               parent;
@@ -92,7 +94,8 @@ clauf::decl* name_lookup(compiler_state& state, bool is_struct, clauf::name name
 void insert_new_decl(compiler_state& state, clauf::decl* decl)
 {
     // Check that we're allowed to add a declaration here.
-    if (state.current_scope->kind != scope::local && state.current_scope->kind != scope::global)
+    if (state.current_scope->kind != scope::local && state.current_scope->kind != scope::global
+        && state.current_scope->kind != scope::struct_)
     {
         state.logger.log(clauf::diagnostic_kind::error, "declaration not allowed in this scope")
             .annotation(clauf::annotation_kind::primary, state.ast.input.location_of(decl), "here")
@@ -1860,10 +1863,21 @@ struct struct_specifier
                   return result;
               },
               [](compiler_state& state, clauf::name name, clauf::member_list members) {
+                  {
+                      scope s(scope::struct_, state.current_scope);
+                      state.current_scope = &s;
+
+                      for (auto mem : members)
+                          insert_new_decl(state, mem);
+
+                      state.current_scope = s.parent;
+                  }
+
                   auto result = state.ast.create<clauf::struct_decl>(name.loc, name.symbol,
                                                                      state.ast.types, members);
                   insert_new_decl(state, result);
                   state.structs.push_back(result);
+
                   return result;
               });
 };

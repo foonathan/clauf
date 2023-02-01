@@ -1136,7 +1136,9 @@ class member_decl : public dryad::basic_node<node_kind::member_decl, decl>
 public:
     explicit member_decl(dryad::node_ctor ctor, ast_symbol name, const clauf::type* type)
     : node_base(ctor, name, type)
-    {}
+    {
+        make_definition();
+    }
 };
 
 using member_list = dryad::unlinked_node_list<member_decl>;
