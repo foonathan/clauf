@@ -66,7 +66,17 @@ const lauf_asm_type* codegen_lauf_type(const clauf::type* ty)
         [](const clauf::array_type*) { return nullptr; },
         [](const clauf::function_type*) { return nullptr; },
         [](const clauf::qualified_type* ty) { return codegen_lauf_type(ty->unqualified_type()); },
-        [](const clauf::decl_type*) { return nullptr; });
+        [](const clauf::decl_type*) {
+            // TODO: we assume it is always a struct
+            return nullptr;
+        });
+}
+
+/// A first class type can be pushed onto the vstack and manipulated by lauf directly.
+/// Otherwise, we need to use pointers and manipulate it indirectly.
+bool is_first_class_type(const clauf::type* ty)
+{
+    return codegen_lauf_type(ty) != nullptr;
 }
 
 // INVARIANT: the resulting layout has a size that is a multiple of alignment.
@@ -574,10 +584,11 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
         },
         [&](dryad::traverse_event_exit, const clauf::decay_expr* expr) {
             // At this point, the address of the lvalue has been pushed onto the stack.
-            // We need to load it if it's an object;
+            // We need to load it if it's a first class type:
             // if it's a function, it's already the value,
-            // if it's an array, it's decaying to the address.
-            if (!expr->is_array_decay_conversion() && clauf::is_complete_object_type(expr->type()))
+            // if it's an array, it's decaying to the address,
+            // if it's not first class, everything deals with pointers anyway.
+            if (!expr->is_array_decay_conversion() && is_first_class_type(expr->type()))
             {
                 // Load the value stored at that point.
                 auto type = codegen_lauf_type(expr->type());
@@ -1066,13 +1077,28 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
     for (auto iter = params.rbegin(); iter != params.rend(); ++iter)
     {
         auto param_decl = *iter;
-        auto type       = codegen_lauf_type(param_decl->type());
 
-        auto var = lauf_asm_build_local(b, type->layout);
+        // The corresponding local variable should be big enough to contain the entire object.
+        auto layout = codegen_lauf_layout(param_decl->type());
+        auto var    = lauf_asm_build_local(b, layout);
         ctx.local_vars.insert(param_decl, var);
 
         lauf_asm_inst_local_addr(b, var);
-        lauf_asm_inst_store_field(b, *type, 0);
+
+        if (auto type = codegen_lauf_type(param_decl->type()))
+        {
+            // If it's a first class, the argument on top of the vstack is the value directly.
+            // We want to store that into our local variable.
+            lauf_asm_inst_store_field(b, *type, 0);
+        }
+        else
+        {
+            // Otherwise, the argument on top of the vstack is a pointer to the struct
+            // object. We want to copy that into the local variable.
+            lauf_asm_inst_roll(b, 1);
+            lauf_asm_inst_uint(b, layout.size);
+            lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
+        }
     }
 
     lauf_asm_block* block_loop_end    = nullptr;
