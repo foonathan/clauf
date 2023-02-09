@@ -395,7 +395,7 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             CLAUF_UNREACHABLE("we don't support anything else yet");
         },
         [&](const clauf::member_access_expr* expr) {
-            // Get the address of the object on top of the stack.
+            // Evaluate the object and put it on top of the stack.
             codegen_lvalue(ctx, b, expr->object());
 
             std::vector<lauf_asm_layout> members;
@@ -476,7 +476,9 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             }
         },
         [&](const clauf::identifier_expr* expr) { codegen_lvalue(ctx, b, expr); },
-        [&](const clauf::member_access_expr* expr) { codegen_lvalue(ctx, b, expr); },
+        [&](dryad::child_visitor<clauf::node_kind>, const clauf::member_access_expr* expr) {
+            codegen_lvalue(ctx, b, expr);
+        },
         [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::function_call_expr* expr) {
             // Push each argument onto the stack.
             for (auto argument : expr->arguments())
