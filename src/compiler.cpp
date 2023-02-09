@@ -653,7 +653,9 @@ struct type_with_specs
 
     bool is_valid_for_function() const
     {
-        return linkage != clauf::linkage::none && !storage_duration && !is_constexpr;
+        return linkage != clauf::linkage::none
+               && (!storage_duration || storage_duration == clauf::storage_duration::static_)
+               && !is_constexpr;
     }
 
     bool requires_declarator() const
