@@ -358,7 +358,8 @@ struct context
     dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
 };
 
-void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr);
+void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
+                  lauf_asm_local* result_storage_ptr = nullptr);
 
 // Evalutes the expression as an lvalue, i.e. we get a pointer.
 void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
@@ -433,7 +434,8 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 }
 
 // Evalutes the expression as an rvalue.
-void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
+void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
+                  lauf_asm_local* result_storage_ptr)
 {
     dryad::visit_tree(
         expr,
@@ -497,12 +499,24 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
                 = std::distance(type->parameters().begin(), type->parameters().end());
             auto return_count = clauf::is_void(type->return_type()) ? 0 : 1;
 
-            lauf_asm_local* call_result = nullptr;
             if (!clauf::is_void(type->return_type()) && !is_first_class_type(type->return_type()))
             {
-                // Generate space to store the result into.
-                call_result = lauf_asm_build_local(b, codegen_lauf_layout(type->return_type()));
-                lauf_asm_inst_local_addr(b, call_result);
+                // We're dealing with a return type that is not first-class,
+                // so we need to push a pointer to store the result into.
+
+                if (result_storage_ptr != nullptr)
+                {
+                    // If we have a result_storage, we can just use that one.
+                    lauf_asm_inst_local_addr(b, result_storage_ptr);
+                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                }
+                else
+                {
+                    // Generate space to store the result into.
+                    auto call_result
+                        = lauf_asm_build_local(b, codegen_lauf_layout(type->return_type()));
+                    lauf_asm_inst_local_addr(b, call_result);
+                }
 
                 ++argument_count;
             }
@@ -1160,12 +1174,16 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
             if (lauf_asm_build_get_vstack_size(b) == 1)
                 lauf_asm_inst_pop(b, 0);
         },
-        [&](dryad::traverse_event_exit, const clauf::return_stmt*) {
-            // The underlying expression has been visited and is on top of the vstack.
+        [&](dryad::child_visitor<clauf::node_kind>, const clauf::return_stmt* stmt) {
+            // Generate code for the return expression, passing it the result storage.
+            codegen_expr(ctx, b, stmt->expr(), return_ptr);
 
             // If the return type is not first class, the top of the vstack is a pointer to the
             // object we're returning. Copy that into the requested pointer.
-            if (return_ptr != nullptr)
+            // If it's a function call, we don't need the memcpy,
+            // since the function will populate return_ptr.
+            if (return_ptr != nullptr
+                && !dryad::node_has_kind<clauf::function_call_expr>(stmt->expr()))
             {
                 lauf_asm_inst_local_addr(b, return_ptr);
                 lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
