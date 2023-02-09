@@ -2356,6 +2356,7 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
                                                          ty_spec.value().linkage.value_or(
                                                              clauf::linkage::external),
                                                          name.symbol, type, decl->parameters());
+            fn_decl->make_definition();
             insert_new_decl(state, fn_decl);
 
             state.current_function = fn_decl;
@@ -2370,7 +2371,6 @@ struct global_declaration : lexy::scan_production<clauf::decl_list>
             auto body = scanner.parse(grammar::block_stmt{});
             if (!body)
                 return lexy::scan_failed;
-            fn_decl->make_definition();
             fn_decl->set_body(body.value());
 
             codegen_new_decl(state, fn_decl);
