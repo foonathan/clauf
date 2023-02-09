@@ -360,7 +360,7 @@ struct context
 
 void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr);
 
-// Evalutes the expression as an lvalue.
+// Evalutes the expression as an lvalue, i.e. we get a pointer.
 void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 {
     dryad::visit_node_all(
@@ -405,8 +405,10 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             CLAUF_UNREACHABLE("we don't support anything else yet");
         },
         [&](const clauf::member_access_expr* expr) {
-            // Evaluate the object and put it on top of the stack.
-            codegen_lvalue(ctx, b, expr->object());
+            // Get the address of the object and put it on top of the stack.
+            // Since it's a struct type, which is not first-class, the result of the expression will
+            // be a pointer anyway, even if we don't evaluate it as an lvalue.
+            codegen_expr(ctx, b, expr->object());
 
             std::vector<lauf_asm_layout> members;
             for (auto member :
