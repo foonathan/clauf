@@ -127,7 +127,8 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
     else if (shadowed->is_definition() && !decl->is_definition())
     {
         // Put the definition back into the symbol table.
-        auto result = state.current_scope->symbols.insert_or_shadow(name, shadowed);
+        [[maybe_unused]] auto result
+            = state.current_scope->symbols.insert_or_shadow(name, shadowed);
         CLAUF_ASSERT(result == decl, "decl is the one we inserted above");
     }
 }
