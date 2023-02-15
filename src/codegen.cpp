@@ -360,8 +360,9 @@ struct context
 
 enum class codegen_expr_mode
 {
-    // Evaluates the expression and result in the address (only applicable for actual lvalues).
-    lvalue,
+    // Evaluates the expression and result in the address; only applicable for actual lvalues or
+    // decayed expressions of pointer type.
+    address,
     // Evaluates the expression and stores it in the address on top of the vstack.
     store,
     // Evaluates the expression and pushes it on top of the vstack.
@@ -369,6 +370,9 @@ enum class codegen_expr_mode
     // Evaluates the expression and discards its result; doesn't put anything onto the vstack.
     discard,
 };
+
+void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
+                  codegen_expr_mode mode);
 
 void codegen_constant(context&, lauf_asm_builder* b, const clauf::expr* expr,
                       codegen_expr_mode mode)
@@ -408,7 +412,7 @@ void codegen_constant(context&, lauf_asm_builder* b, const clauf::expr* expr,
     // Process the value according to mode.
     switch (mode)
     {
-    case codegen_expr_mode::lvalue:
+    case codegen_expr_mode::address:
         // This is only possible if the expression is a string literal,
         // and it pushed its address earlier, so we don't need to do anything.
         CLAUF_PRECONDITION(dryad::node_has_kind<clauf::string_literal_expr>(expr));
@@ -430,10 +434,66 @@ void codegen_constant(context&, lauf_asm_builder* b, const clauf::expr* expr,
     }
 }
 
+void codegen_identifier_as_lvalue(context& ctx, lauf_asm_builder* b,
+                                  const clauf::identifier_expr* expr)
+{
+    if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
+    {
+        if (auto local_var = ctx.local_vars.lookup(var_decl))
+        {
+            // Push the value of local_var onto the stack.
+            lauf_asm_inst_local_addr(b, *local_var);
+            return;
+        }
+        else if (auto global_var = ctx.globals->lookup(var_decl->definition()))
+        {
+            // Push the value of global_var onto the stack.
+            lauf_asm_inst_global_addr(b, *global_var);
+            return;
+        }
+    }
+    else if (auto param_decl = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
+    {
+        if (auto local_var = ctx.local_vars.lookup(param_decl))
+        {
+            // Push the address of the parameter onto the stack.
+            lauf_asm_inst_local_addr(b, *local_var);
+            return;
+        }
+    }
+    else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
+    {
+        // Push the address of the function onto the stack.
+        auto fn = fn_decl->linkage() == clauf::linkage::native
+                      ? ctx.functions->lookup(fn_decl)
+                      : ctx.functions->lookup(fn_decl->definition());
+        CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
+        lauf_asm_inst_function_addr(b, *fn);
+        return;
+    }
+}
+
+void codegen_member_as_lvalue(context& ctx, lauf_asm_builder* b,
+                              const clauf::member_access_expr* expr)
+{
+    codegen_expr(ctx, b, expr->object(), codegen_expr_mode::address);
+
+    std::vector<lauf_asm_layout> members;
+    for (auto member :
+         dryad::node_cast<clauf::struct_decl>(expr->object_type_definition())->members())
+    {
+        members.push_back(codegen_lauf_layout(member->type()));
+        if (member->name() == expr->member_name())
+            break;
+    }
+
+    lauf_asm_inst_aggregate_member(b, members.size() - 1, members.data(), members.size());
+}
+
 void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                   codegen_expr_mode mode)
 {
-    auto process_mode = [&] {
+    auto process_mode = [&](bool top_is_lvalue) {
         if (clauf::is_void(expr->type()))
         {
             CLAUF_ASSERT(mode == codegen_expr_mode::discard, "what else would you do with void");
@@ -443,6 +503,10 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
 
         switch (mode)
         {
+        case codegen_expr_mode::address:
+            // It is already an lvalue, no need to do anything.
+            break;
+
         case codegen_expr_mode::store:
             // The vstack looks like this: address value
             // Need to store value in address.
@@ -458,9 +522,12 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
             }
             break;
-        case codegen_expr_mode::lvalue:
         case codegen_expr_mode::value:
-            // We already pushed the value or address on top of the vstack, so do nothing.
+            if (top_is_lvalue)
+            {
+                if (auto type = codegen_lauf_type(expr->type()))
+                    lauf_asm_inst_load_field(b, *type, 0);
+            }
             break;
         case codegen_expr_mode::discard:
             lauf_asm_inst_pop(b, 0);
@@ -505,68 +572,59 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 break;
             }
 
-            process_mode();
+            process_mode(false);
         },
         [&](const clauf::identifier_expr* expr) {
-            CLAUF_PRECONDITION(mode == codegen_expr_mode::lvalue);
+            switch (mode)
+            {
+            case codegen_expr_mode::address:
+                codegen_identifier_as_lvalue(ctx, b, expr);
+                break;
 
-            if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
-            {
-                if (auto local_var = ctx.local_vars.lookup(var_decl))
-                {
-                    // Push the value of local_var onto the stack.
-                    lauf_asm_inst_local_addr(b, *local_var);
-                    return;
-                }
-                else if (auto global_var = ctx.globals->lookup(var_decl->definition()))
-                {
-                    // Push the value of global_var onto the stack.
-                    lauf_asm_inst_global_addr(b, *global_var);
-                    return;
-                }
-            }
-            else if (auto param_decl
-                     = dryad::node_try_cast<clauf::parameter_decl>(expr->declaration()))
-            {
-                if (auto local_var = ctx.local_vars.lookup(param_decl))
-                {
-                    // Push the address of the parameter onto the stack.
-                    lauf_asm_inst_local_addr(b, *local_var);
-                    return;
-                }
-            }
-            else if (auto fn_decl = dryad::node_try_cast<clauf::function_decl>(expr->declaration()))
-            {
-                // Push the address of the function onto the stack.
-                auto fn = fn_decl->linkage() == clauf::linkage::native
-                              ? ctx.functions->lookup(fn_decl)
-                              : ctx.functions->lookup(fn_decl->definition());
-                CLAUF_ASSERT(fn != nullptr, "forgot to populate table");
-                lauf_asm_inst_function_addr(b, *fn);
-                return;
-            }
+            case codegen_expr_mode::store:
+                codegen_identifier_as_lvalue(ctx, b, expr);
+                lauf_asm_inst_uint(b, codegen_lauf_layout(expr->type()).size);
+                lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
+                break;
 
-            CLAUF_UNREACHABLE("we don't support anything else yet");
+            case codegen_expr_mode::value:
+                codegen_identifier_as_lvalue(ctx, b, expr);
+                if (auto type = codegen_lauf_type(expr->type()))
+                    lauf_asm_inst_load_field(b, *type, 0);
+                break;
+
+            case codegen_expr_mode::discard:
+                // No need to evaluate anything.
+                break;
+            }
         },
         [&](const clauf::member_access_expr* expr) {
-            CLAUF_PRECONDITION(mode == codegen_expr_mode::lvalue);
-
-            // Get the address of the object and put it on top of the stack.
-            codegen_expr(ctx, b, expr->object(), codegen_expr_mode::lvalue);
-
-            std::vector<lauf_asm_layout> members;
-            for (auto member :
-                 dryad::node_cast<clauf::struct_decl>(expr->object_type_definition())->members())
+            switch (mode)
             {
-                members.push_back(codegen_lauf_layout(member->type()));
-                if (member->name() == expr->member_name())
-                    break;
-            }
+            case codegen_expr_mode::address:
+                codegen_member_as_lvalue(ctx, b, expr);
+                break;
 
-            lauf_asm_inst_aggregate_member(b, members.size() - 1, members.data(), members.size());
+            case codegen_expr_mode::store:
+                codegen_member_as_lvalue(ctx, b, expr);
+                lauf_asm_inst_uint(b, codegen_lauf_layout(expr->type()).size);
+                lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
+                break;
+
+            case codegen_expr_mode::value:
+                codegen_member_as_lvalue(ctx, b, expr);
+                if (auto type = codegen_lauf_type(expr->type()))
+                    lauf_asm_inst_load_field(b, *type, 0);
+                break;
+
+            case codegen_expr_mode::discard:
+                // Evaluate and discard the object.
+                codegen_expr(ctx, b, expr->object(), codegen_expr_mode::discard);
+                break;
+            }
         },
         [&](const clauf::function_call_expr* expr) {
-            CLAUF_PRECONDITION(mode != codegen_expr_mode::lvalue);
+            CLAUF_PRECONDITION(mode != codegen_expr_mode::address);
 
             auto type = dryad::node_cast<clauf::function_type>(expr->function()->type());
             auto argument_count
@@ -602,7 +660,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 codegen_expr(ctx, b, argument, codegen_expr_mode::value);
 
             // Push the address of the function onto the stack.
-            codegen_expr(ctx, b, expr->function(), codegen_expr_mode::lvalue);
+            codegen_expr(ctx, b, expr->function(), codegen_expr_mode::address);
 
             // Call the function.
             lauf_asm_inst_call_indirect(b,
@@ -693,25 +751,12 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 CLAUF_UNREACHABLE("no other conversion is allowed");
             }
 
-            process_mode();
+            process_mode(false);
         },
         [&](const clauf::decay_expr* expr) {
-            // TODO: evaluate as value instead
-            codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
-
-            // At this point, the address of the lvalue has been pushed onto the stack.
-            // We need to load it if it's a first class type:
-            // if it's a function, it's already the value,
-            // if it's an array, it's decaying to the address,
-            // if it's not first class, everything deals with pointers anyway.
-            if (!expr->is_array_decay_conversion() && is_first_class_type(expr->type()))
-            {
-                // Load the value stored at that point.
-                auto type = codegen_lauf_type(expr->type());
-                lauf_asm_inst_load_field(b, *type, 0);
-            }
-
-            process_mode();
+            if (mode == codegen_expr_mode::address)
+                mode = codegen_expr_mode::value;
+            codegen_expr(ctx, b, expr->child(), mode);
         },
         [&](const clauf::unary_expr* expr) {
             switch (expr->op())
@@ -743,7 +788,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 auto type = codegen_lauf_type(expr->type());
 
                 // Get the address on top of the vstack.
-                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::address);
 
                 // Do a load to get the value.
                 lauf_asm_inst_pick(b, 0);
@@ -773,7 +818,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 auto type = codegen_lauf_type(expr->type());
 
                 // Get the address on top of the vstack.
-                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::address);
 
                 // Do a load to get the value.
                 lauf_asm_inst_pick(b, 0);
@@ -800,23 +845,19 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
             }
 
             case clauf::unary_op::deref:
-                CLAUF_ASSERT(mode == codegen_expr_mode::lvalue,
-                             "the result of deref is always an lvalue and decayed if necessary");
-                // fallthrough
             case clauf::unary_op::address:
                 // Evaluate it as an address.
-                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::address);
                 break;
             }
 
-            process_mode();
+            process_mode(clauf::is_lvalue(expr));
         },
         [&](const clauf::arithmetic_expr* expr) {
             codegen_expr(ctx, b, expr->left(), codegen_expr_mode::value);
             codegen_expr(ctx, b, expr->right(), codegen_expr_mode::value);
             call_arithmetic_builtin(b, expr->op(), expr);
-
-            process_mode();
+            process_mode(false);
         },
         [&](const clauf::comparison_expr* expr) {
             codegen_expr(ctx, b, expr->left(), codegen_expr_mode::value);
@@ -885,7 +926,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 break;
             }
 
-            process_mode();
+            process_mode(false);
         },
         [&](const clauf::sequenced_expr* expr) {
             switch (expr->op())
@@ -957,13 +998,13 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 break;
             }
 
-            process_mode();
+            process_mode(false);
         },
         [&](const clauf::assignment_expr* expr) {
-            CLAUF_PRECONDITION(mode != codegen_expr_mode::lvalue);
+            CLAUF_PRECONDITION(mode != codegen_expr_mode::address);
 
             // Get the address of the left hand side.
-            codegen_expr(ctx, b, expr->left(), codegen_expr_mode::lvalue);
+            codegen_expr(ctx, b, expr->left(), codegen_expr_mode::address);
             // Since the result of assignment is the value of the left-hand side, we might need it
             // again.
             lauf_asm_inst_pick(b, 0);
@@ -994,7 +1035,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
 
             switch (mode)
             {
-            case codegen_expr_mode::lvalue:
+            case codegen_expr_mode::address:
                 CLAUF_UNREACHABLE("precondition failure");
                 break;
 
