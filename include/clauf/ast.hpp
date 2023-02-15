@@ -841,6 +841,11 @@ public:
         insert_child_after(nullptr, expr);
     }
 
+    bool has_expr() const
+    {
+        return !this->children().empty();
+    }
+
     DRYAD_CHILD_NODE_GETTER(clauf::expr, expr, nullptr)
 };
 

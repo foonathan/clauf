@@ -358,15 +358,158 @@ struct context
     dryad::node_map<const clauf::decl, lauf_asm_local*> local_vars;
 };
 
-void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
-                  lauf_asm_local* result_storage_ptr = nullptr);
-
-// Evalutes the expression as an lvalue, i.e. we get a pointer.
-void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
+enum class codegen_expr_mode
 {
+    // Evaluates the expression and result in the address (only applicable for actual lvalues).
+    lvalue,
+    // Evaluates the expression and stores it in the address on top of the vstack.
+    store,
+    // Evaluates the expression and pushes it on top of the vstack.
+    value,
+    // Evaluates the expression and discards its result; doesn't put anything onto the vstack.
+    discard,
+};
+
+void codegen_constant(context&, lauf_asm_builder* b, const clauf::expr* expr,
+                      codegen_expr_mode mode)
+{
+    if (mode == codegen_expr_mode::discard)
+        return;
+
+    // Evaluate the expression and put its value on top of the vstack.
     dryad::visit_node_all(
         expr,
+        [&](const clauf::nullptr_constant_expr*) {
+            // Push null address onto the stack.
+            lauf_asm_inst_null(b);
+        },
+        [&](const clauf::integer_constant_expr* expr) {
+            // Pushes the value of the expression onto the stack.
+            lauf_asm_inst_uint(b, expr->value());
+        },
+        [&](const clauf::string_literal_expr* expr) {
+            // Get the address of the global that contains the string literal.
+            auto str = lauf_asm_build_string_literal(b, expr->value());
+            lauf_asm_inst_global_addr(b, str);
+        },
+        [&](const clauf::type_constant_expr* expr) {
+            auto layout = codegen_lauf_layout(expr->operand_type());
+            switch (expr->op())
+            {
+            case clauf::type_constant_expr::sizeof_:
+                lauf_asm_inst_uint(b, layout.size);
+                break;
+            case clauf::type_constant_expr::alignof_:
+                lauf_asm_inst_uint(b, layout.alignment);
+                break;
+            }
+        });
+
+    // Process the value according to mode.
+    switch (mode)
+    {
+    case codegen_expr_mode::lvalue:
+        // This is only possible if the expression is a string literal,
+        // and it pushed its address earlier, so we don't need to do anything.
+        CLAUF_PRECONDITION(dryad::node_has_kind<clauf::string_literal_expr>(expr));
+        break;
+
+    case codegen_expr_mode::store:
+        // vstack looks like: addr value
+        lauf_asm_inst_roll(b, 1);
+        lauf_asm_inst_store_field(b, *codegen_lauf_type(expr->type()), 0);
+        break;
+
+    case codegen_expr_mode::value:
+        // Value is already on the vstack, do nothing.
+        break;
+
+    case codegen_expr_mode::discard:
+        CLAUF_UNREACHABLE("handled above");
+        break;
+    }
+}
+
+void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
+                  codegen_expr_mode mode)
+{
+    auto process_mode = [&] {
+        if (clauf::is_void(expr->type()))
+        {
+            CLAUF_ASSERT(mode == codegen_expr_mode::discard, "what else would you do with void");
+            // Nothing is put on top of the vstack for void.
+            return;
+        }
+
+        switch (mode)
+        {
+        case codegen_expr_mode::store:
+            // The vstack looks like this: address value
+            // Need to store value in address.
+            if (auto type = codegen_lauf_type(expr->type()))
+            {
+                lauf_asm_inst_roll(b, 1);
+                lauf_asm_inst_store_field(b, *type, 0);
+            }
+            else
+            {
+                // value is actually a pointer to the object since it's not first class here.
+                lauf_asm_inst_uint(b, codegen_lauf_layout(expr->type()).size);
+                lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
+            }
+            break;
+        case codegen_expr_mode::lvalue:
+        case codegen_expr_mode::value:
+            // We already pushed the value or address on top of the vstack, so do nothing.
+            break;
+        case codegen_expr_mode::discard:
+            lauf_asm_inst_pop(b, 0);
+            break;
+        }
+    };
+
+    dryad::visit_node_all(
+        expr,
+        [&](const clauf::nullptr_constant_expr* expr) { codegen_constant(ctx, b, expr, mode); },
+        [&](const clauf::integer_constant_expr* expr) { codegen_constant(ctx, b, expr, mode); },
+        [&](const clauf::string_literal_expr* expr) { codegen_constant(ctx, b, expr, mode); },
+        [&](const clauf::type_constant_expr* expr) { codegen_constant(ctx, b, expr, mode); },
+        [&](const clauf::builtin_expr* expr) {
+            // Get the value of the argument.
+            codegen_expr(ctx, b, expr->expr(), codegen_expr_mode::value);
+
+            switch (expr->builtin())
+            {
+            case clauf::builtin_expr::print:
+                // Print the value on top of the stack.
+                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
+                // Remove the value after we have printed it.
+                lauf_asm_inst_pop(b, 0);
+                break;
+            case clauf::builtin_expr::assert:
+                // Assert that the value is non-zero.
+                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
+                break;
+
+            case clauf::builtin_expr::malloc:
+                // Add the alignment parameter.
+                lauf_asm_inst_uint(b, 8);
+                // Move size argument which is below alignment to the top.
+                lauf_asm_inst_roll(b, 1);
+                // Allocate memory.
+                lauf_asm_inst_call_builtin(b, lauf_lib_heap_alloc);
+                break;
+            case clauf::builtin_expr::free:
+                // Call free with the address on top of the stack.
+                lauf_asm_inst_call_builtin(b, lauf_lib_heap_free);
+                break;
+            }
+
+            process_mode();
+        },
         [&](const clauf::identifier_expr* expr) {
+            CLAUF_PRECONDITION(mode == codegen_expr_mode::lvalue);
+
             if (auto var_decl = dryad::node_try_cast<clauf::variable_decl>(expr->declaration()))
             {
                 if (auto local_var = ctx.local_vars.lookup(var_decl))
@@ -406,10 +549,10 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
             CLAUF_UNREACHABLE("we don't support anything else yet");
         },
         [&](const clauf::member_access_expr* expr) {
+            CLAUF_PRECONDITION(mode == codegen_expr_mode::lvalue);
+
             // Get the address of the object and put it on top of the stack.
-            // Since it's a struct type, which is not first-class, the result of the expression will
-            // be a pointer anyway, even if we don't evaluate it as an lvalue.
-            codegen_expr(ctx, b, expr->object());
+            codegen_expr(ctx, b, expr->object(), codegen_expr_mode::lvalue);
 
             std::vector<lauf_asm_layout> members;
             for (auto member :
@@ -422,93 +565,26 @@ void codegen_lvalue(context& ctx, lauf_asm_builder* b, const clauf::expr* expr)
 
             lauf_asm_inst_aggregate_member(b, members.size() - 1, members.data(), members.size());
         },
-        [&](const clauf::unary_expr* expr) {
-            // To evaluate a pointer as an lvalue, we don't actually want to dereference it.
-            codegen_expr(ctx, b, expr->child());
-        },
-        [&](const clauf::string_literal_expr* expr) {
-            // Get the address of the global that contains the string literal.
-            auto str = lauf_asm_build_string_literal(b, expr->value());
-            lauf_asm_inst_global_addr(b, str);
-        });
-}
+        [&](const clauf::function_call_expr* expr) {
+            CLAUF_PRECONDITION(mode != codegen_expr_mode::lvalue);
 
-// Evalutes the expression as an rvalue.
-void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
-                  lauf_asm_local* result_storage_ptr)
-{
-    dryad::visit_tree(
-        expr,
-        [&](const clauf::nullptr_constant_expr*) {
-            // Push null address onto the stack.
-            lauf_asm_inst_null(b);
-        },
-        [&](const clauf::integer_constant_expr* expr) {
-            // Pushes the value of the expression onto the stack.
-            lauf_asm_inst_uint(b, expr->value());
-        },
-        [&](const clauf::string_literal_expr* expr) { codegen_lvalue(ctx, b, expr); },
-        [&](const clauf::type_constant_expr* expr) {
-            auto layout = codegen_lauf_layout(expr->operand_type());
-            switch (expr->op())
-            {
-            case clauf::type_constant_expr::sizeof_:
-                lauf_asm_inst_uint(b, layout.size);
-                break;
-            case clauf::type_constant_expr::alignof_:
-                lauf_asm_inst_uint(b, layout.alignment);
-                break;
-            }
-        },
-        [&](dryad::traverse_event_exit, const clauf::builtin_expr* expr) {
-            // The underlying expression has been visited, and pushed its value onto the stack.
-            switch (expr->builtin())
-            {
-            case clauf::builtin_expr::print:
-                // Print the value on top of the stack.
-                lauf_asm_inst_call_builtin(b, lauf_lib_debug_print);
-                // Remove the value after we have printed it.
-                lauf_asm_inst_pop(b, 0);
-                break;
-            case clauf::builtin_expr::assert:
-                // Assert that the value is non-zero.
-                lauf_asm_inst_call_builtin(b, lauf_lib_test_assert);
-                break;
-
-            case clauf::builtin_expr::malloc:
-                // Add the alignment parameter.
-                lauf_asm_inst_uint(b, 8);
-                // Move size argument which is below alignment to the top.
-                lauf_asm_inst_roll(b, 1);
-                // Allocate memory.
-                lauf_asm_inst_call_builtin(b, lauf_lib_heap_alloc);
-                break;
-            case clauf::builtin_expr::free:
-                // Call free with the address on top of the stack.
-                lauf_asm_inst_call_builtin(b, lauf_lib_heap_free);
-                break;
-            }
-        },
-        [&](const clauf::identifier_expr* expr) { codegen_lvalue(ctx, b, expr); },
-        [&](dryad::child_visitor<clauf::node_kind>, const clauf::member_access_expr* expr) {
-            codegen_lvalue(ctx, b, expr);
-        },
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::function_call_expr* expr) {
             auto type = dryad::node_cast<clauf::function_type>(expr->function()->type());
             auto argument_count
                 = std::distance(type->parameters().begin(), type->parameters().end());
             auto return_count = clauf::is_void(type->return_type()) ? 0 : 1;
 
-            if (!clauf::is_void(type->return_type()) && !is_first_class_type(type->return_type()))
+            auto function_requires_return_ptr
+                = !clauf::is_void(type->return_type()) && !is_first_class_type(type->return_type());
+            if (function_requires_return_ptr)
             {
                 // We're dealing with a return type that is not first-class,
                 // so we need to push a pointer to store the result into.
 
-                if (result_storage_ptr != nullptr)
+                if (mode == codegen_expr_mode::store)
                 {
-                    // If we have a result_storage, we can just use that one.
-                    lauf_asm_inst_local_addr(b, result_storage_ptr);
-                    lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                    // We have an address on top of the vstack anyway,
+                    // where we want to store the result into.
+                    // So we don't need to do anything.
                 }
                 else
                 {
@@ -523,21 +599,29 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
 
             // Push each argument onto the stack.
             for (auto argument : expr->arguments())
-                visitor(argument);
+                codegen_expr(ctx, b, argument, codegen_expr_mode::value);
 
             // Push the address of the function onto the stack.
-            visitor(expr->function());
+            codegen_expr(ctx, b, expr->function(), codegen_expr_mode::lvalue);
 
             // Call the function.
             lauf_asm_inst_call_indirect(b,
                                         {std::uint8_t(argument_count), std::uint8_t(return_count)});
-        },
-        [&](dryad::traverse_event_exit, const clauf::cast_expr* expr) {
-            // At this point, the value to be casted is on top of the stack.
-            if (clauf::is_void(expr->type()))
-            {
-                // Discard the value.
+
+            if (function_requires_return_ptr
+                && (mode == codegen_expr_mode::discard || mode == codegen_expr_mode::store))
+                // We have the return ptr again on top of the vstack, and need to discard it.
                 lauf_asm_inst_pop(b, 0);
+        },
+        [&](const clauf::cast_expr* expr) {
+            // Get the value of the thing we're casting.
+            codegen_expr(ctx, b, expr->child(),
+                         clauf::is_void(expr->type()) ? codegen_expr_mode::discard
+                                                      : codegen_expr_mode::value);
+
+            if (clauf::is_void(expr->type()))
+            { // NOLINT: for clarity
+              // Value has been discarded already.
             }
             else if (clauf::is_unsigned_int(expr->type()))
             {
@@ -608,8 +692,13 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
             {
                 CLAUF_UNREACHABLE("no other conversion is allowed");
             }
+
+            process_mode();
         },
-        [&](dryad::traverse_event_exit, const clauf::decay_expr* expr) {
+        [&](const clauf::decay_expr* expr) {
+            // TODO: evaluate as value instead
+            codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
+
             // At this point, the address of the lvalue has been pushed onto the stack.
             // We need to load it if it's a first class type:
             // if it's a function, it's already the value,
@@ -621,24 +710,28 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 auto type = codegen_lauf_type(expr->type());
                 lauf_asm_inst_load_field(b, *type, 0);
             }
+
+            process_mode();
         },
-        [&](dryad::traverse_event_exit, const clauf::unary_expr* expr) {
-            // At this point, one value has been pushed onto the stack.
+        [&](const clauf::unary_expr* expr) {
             switch (expr->op())
             {
             case clauf::unary_op::plus:
-                // Do nothing.
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::value);
                 break;
             case clauf::unary_op::neg:
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::value);
                 lauf_asm_inst_sint(b, -1);
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_smul(LAUF_LIB_INT_OVERFLOW_PANIC));
                 break;
             case clauf::unary_op::bnot:
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::value);
                 // NOT is XOR with -1 (all bits set)
                 lauf_asm_inst_sint(b, -1);
                 lauf_asm_inst_call_builtin(b, lauf_lib_bits_xor);
                 break;
             case clauf::unary_op::lnot:
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::value);
                 // If any bit is set, produce 0, otherwise, produce 1.
                 lauf_asm_inst_uint(b, 0);
                 lauf_asm_inst_call_builtin(b, lauf_lib_int_ucmp);
@@ -649,8 +742,11 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
             case clauf::unary_op::pre_dec: {
                 auto type = codegen_lauf_type(expr->type());
 
-                // Because its an lvalue, the address is on the stack.
+                // Get the address on top of the vstack.
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
+
                 // Do a load to get the value.
+                lauf_asm_inst_pick(b, 0);
                 lauf_asm_inst_load_field(b, *type, 0);
 
                 // Add/subtract one to the current value.
@@ -661,9 +757,11 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                                             : clauf::arithmetic_op::sub,
                                         expr);
 
-                // Save a copy into the lvalue.
+                // vstack looks like this: address new_value
+                // First duplicate new_value as that is the result: address new_value new_value
                 lauf_asm_inst_pick(b, 0);
-                codegen_lvalue(ctx, b, expr->child());
+                // Move the address on top of the vstack.
+                lauf_asm_inst_roll(b, 2);
                 lauf_asm_inst_store_field(b, *type, 0);
 
                 // At this point, the new value is on the stack.
@@ -674,8 +772,11 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
             case clauf::unary_op::post_dec: {
                 auto type = codegen_lauf_type(expr->type());
 
-                // Because its an lvalue, the address is on the stack.
+                // Get the address on top of the vstack.
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
+
                 // Do a load to get the value.
+                lauf_asm_inst_pick(b, 0);
                 lauf_asm_inst_load_field(b, *type, 0);
 
                 // We duplicate the old value as we want to evaluate that.
@@ -689,31 +790,38 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                                             : clauf::arithmetic_op::sub,
                                         expr);
 
-                // Store the new value in the lvalue, this removes it from the stack.
-                codegen_lvalue(ctx, b, expr->child());
+                // vstack looks like this: address old_value new_value
+                // Store new_value into address
+                lauf_asm_inst_roll(b, 2);
                 lauf_asm_inst_store_field(b, *type, 0);
 
                 // At this point, the old value is on the stack.
                 break;
             }
 
-            case clauf::unary_op::address:
-                // Remove the value of the child expression and push its address instead.
-                lauf_asm_inst_pop(b, 0);
-                codegen_lvalue(ctx, b, expr->child());
-                break;
             case clauf::unary_op::deref:
-                // The address is on top of the stack.
-                // No need to do anything, lvalue conversion dereferences it.
+                CLAUF_ASSERT(mode == codegen_expr_mode::lvalue,
+                             "the result of deref is always an lvalue and decayed if necessary");
+                // fallthrough
+            case clauf::unary_op::address:
+                // Evaluate it as an address.
+                codegen_expr(ctx, b, expr->child(), codegen_expr_mode::lvalue);
                 break;
             }
+
+            process_mode();
         },
-        [&](dryad::traverse_event_exit, const clauf::arithmetic_expr* expr) {
-            // At this point, two values have been pushed onto the stack.
+        [&](const clauf::arithmetic_expr* expr) {
+            codegen_expr(ctx, b, expr->left(), codegen_expr_mode::value);
+            codegen_expr(ctx, b, expr->right(), codegen_expr_mode::value);
             call_arithmetic_builtin(b, expr->op(), expr);
+
+            process_mode();
         },
-        [&](dryad::traverse_event_exit, const clauf::comparison_expr* expr) {
-            // At this point, two values have been pushed onto the stack.
+        [&](const clauf::comparison_expr* expr) {
+            codegen_expr(ctx, b, expr->left(), codegen_expr_mode::value);
+            codegen_expr(ctx, b, expr->right(), codegen_expr_mode::value);
+
             // Compare them.
             if (clauf::is_signed_int(expr->left()->type()))
             {
@@ -776,8 +884,10 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 lauf_asm_inst_cc(b, LAUF_ASM_INST_CC_GE);
                 break;
             }
+
+            process_mode();
         },
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::sequenced_expr* expr) {
+        [&](const clauf::sequenced_expr* expr) {
             switch (expr->op())
             {
             case clauf::sequenced_op::land: {
@@ -786,7 +896,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 auto block_shortcircuit = lauf_asm_declare_block(b, cur_stack_size);
                 auto block_end          = lauf_asm_declare_block(b, cur_stack_size + 1);
 
-                visitor(expr->left());
+                codegen_expr(ctx, b, expr->left(), codegen_expr_mode::value);
                 auto const_target = lauf_asm_inst_branch(b, block_eval_right, block_shortcircuit);
 
                 if (const_target != block_shortcircuit)
@@ -794,7 +904,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                     // We only reach this point if left has been true, so whatever is the result of
                     // right is our result.
                     lauf_asm_build_block(b, block_eval_right);
-                    visitor(expr->right());
+                    codegen_expr(ctx, b, expr->right(), codegen_expr_mode::value);
                     lauf_asm_inst_jump(b, block_end);
                 }
 
@@ -816,7 +926,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                 auto block_shortcircuit = lauf_asm_declare_block(b, cur_stack_size);
                 auto block_end          = lauf_asm_declare_block(b, cur_stack_size + 1);
 
-                visitor(expr->left());
+                codegen_expr(ctx, b, expr->left(), codegen_expr_mode::value);
                 auto const_target = lauf_asm_inst_branch(b, block_shortcircuit, block_eval_right);
 
                 if (const_target != block_eval_right)
@@ -832,7 +942,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                     // We only reach this point if left has been false, so whatever is the result of
                     // right is our result.
                     lauf_asm_build_block(b, block_eval_right);
-                    visitor(expr->right());
+                    codegen_expr(ctx, b, expr->right(), codegen_expr_mode::value);
                     lauf_asm_inst_jump(b, block_end);
                 }
 
@@ -841,72 +951,89 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
             }
 
             case clauf::sequenced_op::comma:
-                visitor(expr->left());
+                codegen_expr(ctx, b, expr->left(), codegen_expr_mode::value);
                 lauf_asm_inst_pop(b, 0);
-                visitor(expr->right());
+                codegen_expr(ctx, b, expr->right(), codegen_expr_mode::value);
                 break;
             }
+
+            process_mode();
         },
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::assignment_expr* expr) {
-            // Push the value we're assigning.
-            // This might involve an arithmetic operation.
+        [&](const clauf::assignment_expr* expr) {
+            CLAUF_PRECONDITION(mode != codegen_expr_mode::lvalue);
+
+            // Get the address of the left hand side.
+            codegen_expr(ctx, b, expr->left(), codegen_expr_mode::lvalue);
+            // Since the result of assignment is the value of the left-hand side, we might need it
+            // again.
+            lauf_asm_inst_pick(b, 0);
+
             if (expr->op() != clauf::assignment_op::none)
             {
                 CLAUF_ASSERT(clauf::is_lvalue(expr->left()), "lhs of assignment should be lvalue");
-                // Evaluating the lvalue gets the address, not the value, since we're lacking an
-                // lvalue conversion expression.
-                visitor(expr->left());
-                // Manually do that here.
+
+                // Load the value of the left hand side.
+                lauf_asm_inst_pick(b, 0);
                 auto type = codegen_lauf_type(expr->left()->type());
                 lauf_asm_inst_load_field(b, *type, 0);
 
-                visitor(expr->right());
+                // Evaluate the right hand side.
+                codegen_expr(ctx, b, expr->right(), codegen_expr_mode::value);
+                // And combine the two.
                 call_arithmetic_builtin(b, expr->op(), expr);
-            }
-            else
-            {
-                visitor(expr->right());
-            }
 
-            // The stack now contains the value we're assigning.
-            // If the expression is not used in an expression statement, we need the value, so
-            // duplicate it.
-            if (!dryad::node_has_kind<clauf::expr_stmt>(expr->parent()))
-            {
-                lauf_asm_inst_pick(b, 0);
-            }
-
-            // Push the address of the lvalue onto the stack.
-            codegen_lvalue(ctx, b, expr->left());
-
-            if (auto type = codegen_lauf_type(expr->left()->type()))
-            {
-                // Store the value into address.
+                // Manually store result.
+                lauf_asm_inst_roll(b, 1);
                 lauf_asm_inst_store_field(b, *type, 0);
             }
             else
             {
-                // We need to memcpy into the address.
-                lauf_asm_inst_roll(b, 1);
-                lauf_asm_inst_uint(b, codegen_lauf_layout(expr->left()->type()).size);
+                // Evaluate the right hand side and store it into the adress on top of the vstack.
+                codegen_expr(ctx, b, expr->right(), codegen_expr_mode::store);
+            }
+
+            switch (mode)
+            {
+            case codegen_expr_mode::lvalue:
+                CLAUF_UNREACHABLE("precondition failure");
+                break;
+
+            case codegen_expr_mode::store:
+                // vstack looks as follows: store_address left_address
+                // Memcpy left_address into store_address.
+                lauf_asm_inst_uint(b, codegen_lauf_layout(expr->type()).size);
                 lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
+                break;
+
+            case codegen_expr_mode::value:
+                // We have the left_address on top of the vstack.
+                // Load it, if it's a first class type.
+                if (auto type = codegen_lauf_type(expr->type()))
+                    lauf_asm_inst_load_field(b, *type, 0);
+                break;
+
+            case codegen_expr_mode::discard:
+                // We have the left_address on top of the vstack.
+                // Discard it.
+                lauf_asm_inst_pop(b, 0);
+                break;
             }
         },
-        [&](dryad::child_visitor<clauf::node_kind> visitor, const clauf::conditional_expr* expr) {
+        [&](const clauf::conditional_expr* expr) {
             auto cur_stack_size = lauf_asm_build_get_vstack_size(b);
             auto block_if_true  = lauf_asm_declare_block(b, cur_stack_size);
             auto block_if_false = lauf_asm_declare_block(b, cur_stack_size);
             auto block_end      = lauf_asm_declare_block(b, cur_stack_size + 1);
 
             // Evaluate the condition and push it onto the stack.
-            visitor(expr->condition());
+            codegen_expr(ctx, b, expr->condition(), codegen_expr_mode::value);
             auto const_target = lauf_asm_inst_branch(b, block_if_true, block_if_false);
 
             if (const_target != block_if_false)
             {
                 // Evaluate the if_true case.
                 lauf_asm_build_block(b, block_if_true);
-                visitor(expr->if_true());
+                codegen_expr(ctx, b, expr->if_true(), mode);
                 lauf_asm_inst_jump(b, block_end);
             }
 
@@ -914,7 +1041,7 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
             {
                 // Evaluate the if_false case.
                 lauf_asm_build_block(b, block_if_false);
-                visitor(expr->if_false());
+                codegen_expr(ctx, b, expr->if_false(), mode);
                 lauf_asm_inst_jump(b, block_end);
             }
 
@@ -937,10 +1064,8 @@ void constant_eval_impl(void* data, context& ctx, const clauf::type* type, const
         if constexpr (std::is_same_v<ExprOrInit, clauf::expr>)
         {
             // Store the result of the expression in the native global.
-            auto lauf_type = codegen_lauf_type(type);
-            codegen_expr(ctx, b, e);
             lauf_asm_inst_global_addr(b, ctx.consteval_result_global);
-            lauf_asm_inst_store_field(b, *lauf_type, 0);
+            codegen_expr(ctx, b, e, codegen_expr_mode::store);
         }
         else
         {
@@ -1017,15 +1142,20 @@ void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
         CLAUF_ASSERT(clauf::is_scalar(type), "only scalars map to single stack values");
 
         dryad::visit_tree(
-            init, [&](const clauf::empty_init*) { lauf_asm_inst_uint(b, 0); },
+            init,
+            [&](const clauf::empty_init*) {
+                lauf_asm_inst_uint(b, 0);
+
+                // Store it into the object.
+                lauf_asm_inst_roll(b, 1);
+                lauf_asm_inst_store_field(b, *lauf_type, 0);
+            },
             [&](const clauf::braced_init*) {
                 // No need to do anything, the children push the value.
             },
-            [&](const clauf::expr_init* init) { codegen_expr(ctx, b, init->expression()); });
-
-        // Store it into the object.
-        lauf_asm_inst_roll(b, 1);
-        lauf_asm_inst_store_field(b, *lauf_type, 0);
+            [&](const clauf::expr_init* init) {
+                codegen_expr(ctx, b, init->expression(), codegen_expr_mode::store);
+            });
     }
     else if (auto array = dryad::node_try_cast<const clauf::array_type>(type))
     {
@@ -1168,32 +1298,32 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
 
             anchor = expanded_location.anchor();
         },
-        [&](dryad::traverse_event_exit, const clauf::expr_stmt*) {
-            // The underlying expression has been visited, and we need to remove its value from
-            // the stack -- if the expression did not do that for us already.
-            if (lauf_asm_build_get_vstack_size(b) == 1)
-                lauf_asm_inst_pop(b, 0);
+        [&](dryad::child_visitor<clauf::node_kind>, const clauf::expr_stmt* stmt) {
+            // Evaluate and discard the expression.
+            codegen_expr(ctx, b, stmt->expr(), codegen_expr_mode::discard);
         },
         [&](dryad::child_visitor<clauf::node_kind>, const clauf::return_stmt* stmt) {
-            // Generate code for the return expression, passing it the result storage.
-            codegen_expr(ctx, b, stmt->expr(), return_ptr);
-
-            // If the return type is not first class, the top of the vstack is a pointer to the
-            // object we're returning. Copy that into the requested pointer.
-            // If it's a function call, we don't need the memcpy,
-            // since the function will populate return_ptr.
-            if (return_ptr != nullptr
-                && !dryad::node_has_kind<clauf::function_call_expr>(stmt->expr()))
+            if (!stmt->has_expr())
             {
+                // Do nothing to evaluate the expression, since there is none.
+            }
+            else if (return_ptr == nullptr)
+            {
+                // Return a first class type by evaluating the expression as a value.
+                codegen_expr(ctx, b, stmt->expr(), codegen_expr_mode::value);
+            }
+            else
+            {
+                // Generate code for the return expression, storing it in the return ptr.
+                // So first load the return ptr.
                 lauf_asm_inst_local_addr(b, return_ptr);
                 lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
-                lauf_asm_inst_roll(b, 1);
-                lauf_asm_inst_uint(b, codegen_lauf_layout(decl->type()->return_type()).size);
-                lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
 
-                // Evaluate to the return pointer instead.
-                lauf_asm_inst_local_addr(b, return_ptr);
-                lauf_asm_inst_load_field(b, lauf_asm_type_value, 0);
+                // Duplicate it, since that's the value we're returning.
+                lauf_asm_inst_pick(b, 0);
+
+                // Store it in the return pointer.
+                codegen_expr(ctx, b, stmt->expr(), codegen_expr_mode::store);
             }
 
             lauf_asm_inst_return(b);
@@ -1211,8 +1341,8 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
             auto block_if_false = lauf_asm_declare_block(b, 0);
             auto block_end      = lauf_asm_declare_block(b, 0);
 
-            // Evaluate the condition.
-            visitor(stmt->condition());
+            // Evaluate the condition as a value.
+            codegen_expr(ctx, b, stmt->condition(), codegen_expr_mode::value);
             // Now 0/1 is on top of the stack.
             // Branch to one of the basic blocks.
             auto const_target = lauf_asm_inst_branch(b, block_if_true, block_if_false);
@@ -1265,9 +1395,9 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
                 lauf_asm_inst_jump(b, block_loop_body);
             }
 
-            // Evaluate condition in loop header and branch.
+            // Evaluate condition in loop header as a value and branch.
             lauf_asm_build_block(b, block_loop_header);
-            visitor(stmt->condition());
+            codegen_expr(ctx, b, stmt->condition(), codegen_expr_mode::value);
             lauf_asm_inst_branch(b, block_loop_body, block_loop_end);
 
             // Evaluate body.
@@ -1297,8 +1427,8 @@ lauf_asm_function* codegen_function_body(context& ctx, const clauf::function_dec
             }
         },
         //=== expression ===//
-        [&](dryad::child_visitor<clauf::node_kind>, const clauf::expr* expr) {
-            codegen_expr(ctx, b, expr);
+        [&](dryad::child_visitor<clauf::node_kind>, const clauf::expr*) {
+            CLAUF_UNREACHABLE("need to manually visit expressions");
         });
 
     lauf_asm_build_debug_location(b, {0, 0, true});
