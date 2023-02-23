@@ -2110,11 +2110,12 @@ void verify_init(compiler_state& state, clauf::location loc, const clauf::type* 
 
         dryad::visit_node_all(
             init, [](clauf::empty_init*) {},
-            [&](clauf::expr_init*) {
-                state.logger
-                    .log(clauf::diagnostic_kind::error, "cannot initialize struct from expression")
-                    .annotation(clauf::annotation_kind::primary, loc, "here")
-                    .finish();
+            [&](clauf::expr_init* init) {
+                auto converted_expr
+                    = do_assignment_conversion(state, loc, clauf::assignment_op::none, type,
+                                               init->expression());
+                init->set_expression(converted_expr);
+                init->freeze_expression();
             },
             [&](clauf::braced_init* init) {
                 auto cur_member = struct_->members().begin();

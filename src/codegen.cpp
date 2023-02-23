@@ -1303,8 +1303,8 @@ void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
                 lauf_asm_inst_uint(b, struct_layout.size);
                 lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
             },
-            [&](const clauf::expr_init*) {
-                CLAUF_UNREACHABLE("struct cannot be initialized by expression");
+            [&](const clauf::expr_init* init) {
+                codegen_expr(ctx, b, init->expression(), codegen_expr_mode::store);
             },
             [&](const clauf::braced_init* init) {
                 // If we are currently doing constant evaluation, or if we can't evaluate the

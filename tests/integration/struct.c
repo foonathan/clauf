@@ -22,7 +22,9 @@ void modify_foo(struct foo* f)
 
 int main()
 {
-    struct foo f;
+    struct foo f = make_foo();
+    __clauf_assert(f.a == 11);
+    __clauf_assert(f.b == 'a');
 
     f = forward_foo(make_foo());
     __clauf_assert(f.a == 11);
