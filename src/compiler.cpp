@@ -733,6 +733,10 @@ struct builtin_expr
         });
 };
 
+struct initializer;
+void verify_init(compiler_state& state, clauf::location loc, const clauf::type* type,
+                 clauf::init* init);
+
 struct expr : lexy::expression_production
 {
     // primary-expression
@@ -749,7 +753,10 @@ struct expr : lexy::expression_production
         // We thus do it here as part of the primary-expression, even though it is not a
         // primary-expression, but has lower precedence. However, no other operator matches
         // before that, so it works out.
-        auto cast       = dsl::p<type_name_in_parens> >> dsl::recurse<unary_expr>;
+        auto braced_init = dsl::peek(dsl::curly_bracketed.open()) >> dsl::recurse<initializer>;
+        auto cast
+            = dsl::p<type_name_in_parens> >> (braced_init | dsl::else_ >> dsl::recurse<unary_expr>);
+
         auto parens     = dsl::recurse<expr> + dsl::parenthesized.close();
         auto paren_expr = dsl::position(dsl::parenthesized.open()) >> (cast | dsl::else_ >> parens);
 
@@ -1015,6 +1022,11 @@ struct expr : lexy::expression_production
                 return child;
             else
                 return state.ast.create<clauf::cast_expr>(pos, target_type, child);
+        },
+        [](compiler_state& state, const char* pos, const clauf::type* target_type,
+           clauf::init* value) -> clauf::expr* {
+            verify_init(state, pos, target_type, value);
+            return state.ast.create<clauf::compound_expr>(pos, target_type, value);
         },
         [](compiler_state& state, clauf::expr* fn, op_tag<> op, clauf::expr_list arguments) {
             fn = do_lvalue_conversion(state, op.loc, fn);

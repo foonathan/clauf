@@ -373,6 +373,8 @@ enum class codegen_expr_mode
 
 void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
                   codegen_expr_mode mode);
+void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
+                  const clauf::init* init);
 
 void codegen_constant(context&, lauf_asm_builder* b, const clauf::expr* expr,
                       codegen_expr_mode mode)
@@ -752,6 +754,33 @@ void codegen_expr(context& ctx, lauf_asm_builder* b, const clauf::expr* expr,
             }
 
             process_mode(false);
+        },
+        [&](const clauf::compound_expr* expr) {
+            switch (mode)
+            {
+            case codegen_expr_mode::address:
+            case codegen_expr_mode::value: {
+                // Create a temporary to store the struct into.
+                auto local = lauf_asm_build_local(b, codegen_lauf_layout(expr->type()));
+                lauf_asm_inst_local_addr(b, local);
+                codegen_init(ctx, b, expr->type(), expr->initializer());
+                lauf_asm_inst_local_addr(b, local);
+
+                if (auto type = codegen_lauf_type(expr->type());
+                    mode == codegen_expr_mode::value && type != nullptr)
+                    lauf_asm_inst_load_field(b, *type, 0);
+                break;
+            }
+
+            case codegen_expr_mode::store:
+                // We already have an address on top of the vstack already.
+                codegen_init(ctx, b, expr->type(), expr->initializer());
+                break;
+
+            case codegen_expr_mode::discard:
+                // It has no side effects, we don't need to do anything.
+                break;
+            }
         },
         [&](const clauf::decay_expr* expr) {
             if (mode == codegen_expr_mode::address)

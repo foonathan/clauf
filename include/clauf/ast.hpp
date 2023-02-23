@@ -298,6 +298,7 @@ enum class node_kind
     function_call_expr,
     member_access_expr,
     cast_expr,
+    compound_expr,
     decay_expr,
     unary_expr,
     arithmetic_expr,
@@ -627,6 +628,18 @@ public:
     }
 
     DRYAD_CHILD_NODE_GETTER(expr, child, nullptr)
+};
+
+class init;
+
+/// A compound literal.
+class compound_expr : public dryad::basic_node<node_kind::compound_expr, expr>
+{
+public:
+    explicit compound_expr(dryad::node_ctor ctor, const clauf::type* target_type,
+                           clauf::init* initializer);
+
+    DRYAD_CHILD_NODE_GETTER(init, initializer, nullptr)
 };
 
 /// An lvalue conversion that converts an lvalue expression into its value,

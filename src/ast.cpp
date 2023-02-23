@@ -6,6 +6,13 @@
 #include <cstdio>
 #include <iterator>
 
+clauf::compound_expr::compound_expr(dryad::node_ctor ctor, const clauf::type* target_type,
+                                    clauf::init* initializer)
+: node_base(ctor, target_type)
+{
+    insert_child_after(nullptr, initializer);
+}
+
 clauf::type* clauf::clone(type_forest::node_creator creator, const type* ty)
 {
     return dryad::visit_node_all(
@@ -601,6 +608,8 @@ const char* to_string(clauf::node_kind kind)
         return "decay expr";
     case clauf::node_kind::cast_expr:
         return "cast expr";
+    case clauf::node_kind::compound_expr:
+        return "compound expr";
     case clauf::node_kind::unary_expr:
         return "unary expr";
     case clauf::node_kind::arithmetic_expr:
@@ -800,6 +809,7 @@ void clauf::dump_ast(const ast& ast)
                 dump_type(ast.symbols, expr->type());
             },
             [&](const cast_expr* expr) { dump_type(ast.symbols, expr->type()); },
+            [&](const compound_expr* expr) { dump_type(ast.symbols, expr->type()); },
             [&](const decay_expr* expr) { dump_type(ast.symbols, expr->type()); },
             [&](const unary_expr* expr) {
                 switch (expr->op())
