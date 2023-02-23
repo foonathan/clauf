@@ -16,8 +16,8 @@ struct foo forward_foo(struct foo f)
 
 void modify_foo(struct foo* f)
 {
-    (*f).a = 42;
-    (*f).b = 'b';
+    f->a = 42;
+    f->b = 'b';
 }
 
 int main()

@@ -778,9 +778,16 @@ struct expr : lexy::expression_production
 
     struct postfix : dsl::postfix_op
     {
+        enum member_access
+        {
+            period,
+            arrow
+        };
+
         static constexpr auto op = op_(LEXY_LIT("(") >> dsl::p<argument_list>)
                                    / op_(dsl::square_bracketed(dsl::recurse<expr>))
-                                   / op_(dsl::period >> dsl::p<identifier<false>>)
+                                   / op_<period>(dsl::period >> dsl::p<identifier<false>>)
+                                   / op_<arrow>(LEXY_LIT("->") >> dsl::p<identifier<false>>)
                                    / op_<clauf::unary_op::post_inc>(LEXY_LIT("++"))
                                    / op_<clauf::unary_op::post_dec>(LEXY_LIT("--"));
         using operand = dsl::atom;
@@ -1073,7 +1080,24 @@ struct expr : lexy::expression_production
             return state.ast.create<clauf::function_call_expr>(op.loc, fn_type->return_type(), fn,
                                                                converted_arguments);
         },
-        [](compiler_state& state, clauf::expr* object, op_tag<> op, clauf::name member_name) {
+        [](compiler_state& state, clauf::expr* object_or_ptr, op_tag<postfix::member_access> op,
+           clauf::name member_name) {
+            auto object = [&] {
+                if (op == postfix::period)
+                    return object_or_ptr;
+
+                if (dryad::node_has_kind<clauf::pointer_type>(object_or_ptr->type()))
+                    return create_unary(state,
+                                        op_tag<clauf::unary_op>(op.loc, clauf::unary_op::deref),
+                                        object_or_ptr);
+
+                state.logger
+                    .log(clauf::diagnostic_kind::error,
+                         "cannot do pointer member access on non-pointer")
+                    .annotation(clauf::annotation_kind::primary, op.loc, "member access")
+                    .finish();
+                throw fatal_error();
+            }();
             auto object_type = object->type();
 
             auto struct_decl = [&]() -> const clauf::struct_decl* {
