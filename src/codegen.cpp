@@ -1262,6 +1262,73 @@ void codegen_init(context& ctx, lauf_asm_builder* b, const clauf::type* type,
                 }
             });
     }
+    else if (auto decl_type = dryad::node_try_cast<const clauf::decl_type>(type))
+    {
+        auto struct_       = dryad::node_cast<clauf::struct_decl>(decl_type->decl())->definition();
+        auto struct_layout = codegen_lauf_layout(decl_type);
+
+        dryad::visit_node_all(
+            init,
+            [&](const clauf::empty_init*) {
+                lauf_asm_inst_uint(b, 0);
+                lauf_asm_inst_uint(b, struct_layout.size);
+                lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
+            },
+            [&](const clauf::expr_init*) {
+                CLAUF_UNREACHABLE("struct cannot be initialized by expression");
+            },
+            [&](const clauf::braced_init* init) {
+                // If we are currently doing constant evaluation, or if we can't evaluate the
+                // initializer at compile-time, we need to manually initialize each array element.
+                if (b == ctx.chunk_builder || !clauf::is_constant_init(init))
+                {
+                    std::vector<lauf_asm_layout> member_layouts;
+                    for (auto member : struct_->members())
+                        member_layouts.push_back(codegen_lauf_layout(member->type()));
+
+                    // At this point the top of the vstack is the address of the struct object.
+                    auto member_index = 0u;
+                    for (auto elem_init : init->initializers())
+                    {
+                        // We want to initialize the current member of the struct.
+                        lauf_asm_inst_pick(b, 0);
+                        lauf_asm_inst_aggregate_member(b, member_index, member_layouts.data(),
+                                                       member_layouts.size());
+                        codegen_init(ctx, b,
+                                     (*std::next(struct_->members().begin(), member_index))->type(),
+                                     elem_init);
+
+                        member_index++;
+                    }
+
+                    for (auto i = 0u; i != init->trailing_empty_inits(); ++i)
+                    {
+                        // We want to memset the current member.
+                        lauf_asm_inst_pick(b, 0);
+                        lauf_asm_inst_aggregate_member(b, member_index, member_layouts.data(),
+                                                       member_layouts.size());
+
+                        lauf_asm_inst_uint(b, 0);
+                        lauf_asm_inst_uint(b, member_layouts[member_index].size);
+                        lauf_asm_inst_call_builtin(b, lauf_lib_memory_fill);
+                    }
+
+                    // Remove the base address of the struct.
+                    lauf_asm_inst_pop(b, 0);
+                }
+                else
+                {
+                    // Otherwise, we can evaluate initializer, store it as global memory,
+                    // and copy the values over.
+                    auto bytes = constant_eval(ctx, type, init);
+
+                    auto data = lauf_asm_build_data_literal(b, bytes.data(), bytes.size());
+                    lauf_asm_inst_global_addr(b, data);
+                    lauf_asm_inst_uint(b, struct_layout.size);
+                    lauf_asm_inst_call_builtin(b, lauf_lib_memory_copy);
+                }
+            });
+    }
     else
     {
         CLAUF_TODO("unimplemented initializer for non-scalar type");

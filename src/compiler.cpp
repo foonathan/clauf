@@ -2092,6 +2092,47 @@ void verify_init(compiler_state& state, clauf::location loc, const clauf::type* 
                 }
             });
     }
+    else if (auto decl_type = dryad::node_try_cast<clauf::decl_type>(type))
+    {
+        auto struct_ = dryad::node_cast<clauf::struct_decl>(decl_type->decl())->definition();
+
+        dryad::visit_node_all(
+            init, [](clauf::empty_init*) {},
+            [&](clauf::expr_init*) {
+                state.logger
+                    .log(clauf::diagnostic_kind::error, "cannot initialize struct from expression")
+                    .annotation(clauf::annotation_kind::primary, loc, "here")
+                    .finish();
+            },
+            [&](clauf::braced_init* init) {
+                auto cur_member = struct_->members().begin();
+                for (auto member_init : init->initializers())
+                {
+                    if (cur_member == struct_->members().end())
+                    {
+                        state.logger
+                            .log(clauf::diagnostic_kind::error, "too many initializers for struct")
+                            .annotation(clauf::annotation_kind::primary, loc, "here")
+                            .finish();
+                        break;
+                    }
+
+                    verify_init(state, loc, (*cur_member)->type(), member_init);
+                    ++cur_member;
+                }
+
+                if (cur_member != struct_->members().end())
+                {
+                    auto trailing_members = 0u;
+                    while (cur_member != struct_->members().end())
+                    {
+                        ++cur_member;
+                        ++trailing_members;
+                    }
+                    init->set_trailing_empty_inits(trailing_members);
+                }
+            });
+    }
     else
     {
         CLAUF_TODO("unhandled non-scalar type");
