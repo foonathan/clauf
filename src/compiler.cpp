@@ -112,6 +112,12 @@ void insert_new_decl(compiler_state& state, clauf::decl* decl)
     // Check for duplicate definition.
     if (shadowed->is_definition() && decl->is_definition())
     {
+        auto shadowed_typedef = dryad::node_try_cast<clauf::typedef_decl>(shadowed);
+        auto decl_typedef     = dryad::node_try_cast<clauf::typedef_decl>(decl);
+        if (shadowed_typedef != nullptr && decl_typedef != nullptr
+            && clauf::is_same(shadowed_typedef->type(), decl_typedef->type()))
+            return;
+
         auto str = name.c_str(state.ast.symbols);
         state.logger
             .log(clauf::diagnostic_kind::error, "duplicate %s definition '%s'",
@@ -379,6 +385,7 @@ enum class simple_decl_specifier
     static_,
     clauf_native,
     clauf_native_string,
+    typedef_,
 
     //=== type specifiers ===//
     void_,
@@ -411,6 +418,7 @@ constexpr auto kw_decl_specifiers
           .map(LEXY_LIT("static"), simple_decl_specifier::static_)
           .map(LEXY_LIT("__clauf_native"), simple_decl_specifier::clauf_native)
           .map(LEXY_LIT("__clauf_native_string"), simple_decl_specifier::clauf_native_string)
+          .map(LEXY_LIT("typedef"), simple_decl_specifier::typedef_)
           .map(LEXY_LIT("void"), simple_decl_specifier::void_)
           .map(LEXY_LIT("int"), simple_decl_specifier::int_)
           .map(LEXY_LIT("char"), simple_decl_specifier::char_)
@@ -640,11 +648,12 @@ struct type_with_specs
     std::optional<clauf::linkage>          linkage;
     std::optional<clauf::storage_duration> storage_duration;
     bool                                   is_constexpr;
+    bool                                   is_typedef;
 
     bool is_valid_for_parameter_or_member() const
     {
-        return (!linkage || linkage == clauf::linkage::native) && !storage_duration
-               && !is_constexpr;
+        return (!linkage || linkage == clauf::linkage::native) && !storage_duration && !is_constexpr
+               && !is_typedef;
     }
     bool is_valid_cast() const
     {
@@ -1571,6 +1580,7 @@ struct decl_specifier_list
                 int                                                         short_count = 0;
                 int                     qualifiers = clauf::qualified_type::unqualified;
                 clauf::native_specifier native     = clauf::native_specifier::none;
+                bool                    is_typedef = false;
 
                 auto log_error = [&] {
                     state.logger
@@ -1627,6 +1637,9 @@ struct decl_specifier_list
                                 log_error();
                             linkage = clauf::linkage::native;
                             native  = clauf::native_specifier::string;
+                            break;
+                        case simple_decl_specifier::typedef_:
+                            is_typedef = true;
                             break;
 
                         case simple_decl_specifier::void_:
@@ -1773,7 +1786,15 @@ struct decl_specifier_list
                         return unqualified_ty;
                     }
                 }();
-                return type_with_specs{result_ty, native, linkage, storage_duration, is_constexpr};
+
+                if (is_typedef)
+                {
+                    if (storage_duration || linkage || is_constexpr)
+                        log_error();
+                }
+
+                return type_with_specs{result_ty,        native,       linkage,
+                                       storage_duration, is_constexpr, is_typedef};
             });
 };
 
@@ -2229,63 +2250,73 @@ struct declaration
             });
         }
 
-        auto create_var = [&] {
-            if (!clauf::is_complete_object_type(type))
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
-                    .annotation(clauf::annotation_kind::primary, name.loc,
-                                "used to declare variable here")
-                    .finish();
-            }
-
-            if (ty_spec.storage_duration == clauf::storage_duration::register_
-                && ty_spec.linkage.value_or(default_linkage) != clauf::linkage::none)
-            {
-                state.logger
-                    .log(clauf::diagnostic_kind::error,
-                         "invalid combination of linkage and register storage class")
-                    .annotation(clauf::annotation_kind::primary, name.loc,
-                                "used to declare variable here")
-                    .finish();
-            }
-
-            auto var
-                = state.ast.create<clauf::variable_decl>(name.loc,
-                                                         ty_spec.linkage.value_or(default_linkage),
-                                                         name.symbol,
-                                                         ty_spec.storage_duration.value_or(
-                                                             default_storage),
-                                                         ty_spec.is_constexpr, type);
-
-            // If the linkage is external, we have used the extern keyword at the declaration.
-            // This makes it a forward declaration of the variable.
-            if (ty_spec.linkage != clauf::linkage::external)
-                var->make_definition();
-
-            return var;
-        };
-        return dryad::visit_node_all(
-            declarator, [&](const clauf::name_declarator*) -> clauf::decl* { return create_var(); },
-            [&](const clauf::pointer_declarator*) -> clauf::decl* { return create_var(); },
-            [&](const clauf::array_declarator*) -> clauf::decl* { return create_var(); },
-            [&](const clauf::function_declarator* decl) -> clauf::decl* {
-                if (!ty_spec.is_valid_for_function())
+        if (ty_spec.is_typedef)
+        {
+            auto type = clauf::get_type(state.ast.types, declarator, ty_spec.native, ty_spec.type);
+            return state.ast.create<clauf::typedef_decl>(pos, clauf::get_name(declarator).symbol,
+                                                         type);
+        }
+        else
+        {
+            auto create_var = [&] {
+                if (!clauf::is_complete_object_type(type))
                 {
                     state.logger
-                        .log(clauf::diagnostic_kind::error,
-                             "invalid declaration specifier for function")
-                        .annotation(clauf::annotation_kind::primary, name.loc, "here")
+                        .log(clauf::diagnostic_kind::error, "invalid use of incomplete object type")
+                        .annotation(clauf::annotation_kind::primary, name.loc,
+                                    "used to declare variable here")
                         .finish();
                 }
 
-                // This is never a definition, since we don't have a function body.
-                return state.ast.create<clauf::function_decl>(name.loc,
-                                                              ty_spec.linkage.value_or(
-                                                                  default_linkage),
-                                                              name.symbol, type,
-                                                              decl->parameters());
-            });
+                if (ty_spec.storage_duration == clauf::storage_duration::register_
+                    && ty_spec.linkage.value_or(default_linkage) != clauf::linkage::none)
+                {
+                    state.logger
+                        .log(clauf::diagnostic_kind::error,
+                             "invalid combination of linkage and register storage class")
+                        .annotation(clauf::annotation_kind::primary, name.loc,
+                                    "used to declare variable here")
+                        .finish();
+                }
+
+                auto var = state.ast.create<clauf::variable_decl>(name.loc,
+                                                                  ty_spec.linkage.value_or(
+                                                                      default_linkage),
+                                                                  name.symbol,
+                                                                  ty_spec.storage_duration.value_or(
+                                                                      default_storage),
+                                                                  ty_spec.is_constexpr, type);
+
+                // If the linkage is external, we have used the extern keyword at the declaration.
+                // This makes it a forward declaration of the variable.
+                if (ty_spec.linkage != clauf::linkage::external)
+                    var->make_definition();
+
+                return var;
+            };
+            return dryad::visit_node_all(
+                declarator,
+                [&](const clauf::name_declarator*) -> clauf::decl* { return create_var(); },
+                [&](const clauf::pointer_declarator*) -> clauf::decl* { return create_var(); },
+                [&](const clauf::array_declarator*) -> clauf::decl* { return create_var(); },
+                [&](const clauf::function_declarator* decl) -> clauf::decl* {
+                    if (!ty_spec.is_valid_for_function())
+                    {
+                        state.logger
+                            .log(clauf::diagnostic_kind::error,
+                                 "invalid declaration specifier for function")
+                            .annotation(clauf::annotation_kind::primary, name.loc, "here")
+                            .finish();
+                    }
+
+                    // This is never a definition, since we don't have a function body.
+                    return state.ast.create<clauf::function_decl>(name.loc,
+                                                                  ty_spec.linkage.value_or(
+                                                                      default_linkage),
+                                                                  name.symbol, type,
+                                                                  decl->parameters());
+                });
+        }
     }
 
     static constexpr auto value = callback<clauf::decl_list>(

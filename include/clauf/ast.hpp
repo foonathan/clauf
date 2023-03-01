@@ -338,9 +338,10 @@ enum class node_kind
     member_decl,
     function_decl,
     struct_decl,
+    typedef_decl,
 
     first_decl = variable_decl,
-    last_decl  = struct_decl,
+    last_decl  = typedef_decl,
 };
 
 using node = dryad::node<node_kind>;
@@ -1254,6 +1255,17 @@ public:
     }
 
     DRYAD_CHILD_NODE_RANGE_GETTER(member_decl, members, nullptr, this)
+};
+
+/// A typedef declaration.
+class typedef_decl : public dryad::basic_node<node_kind::typedef_decl, decl>
+{
+public:
+    explicit typedef_decl(dryad::node_ctor ctor, ast_symbol name, const clauf::type* ty)
+    : node_base(ctor, name, ty)
+    {
+        make_definition();
+    }
 };
 } // namespace clauf
 

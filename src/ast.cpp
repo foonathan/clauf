@@ -656,6 +656,8 @@ const char* to_string(clauf::node_kind kind)
         return "function decl";
     case clauf::node_kind::struct_decl:
         return "struct decl";
+    case clauf::node_kind::typedef_decl:
+        return "typedef decl";
     }
 }
 } // namespace
